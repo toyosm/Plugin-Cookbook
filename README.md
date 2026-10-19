@@ -60,6 +60,24 @@ python3 tools/recipe.py install                  # copy into this user's plugin 
 `build` accepts recipe names (`build my-effect`), `--formats vst3,clap` and `--no-ui`. Plain CMake works
 too: `cmake -S . -B build && cmake --build build`.
 
+### The standalone app
+
+Every recipe also builds as a standalone app (`<id>.app` on macOS, `<id>.exe` on Windows, `<id>` on
+Linux): the same controls plus a bar with input/output meters and an **Audio settings** button. There
+you pick the audio system (Core Audio; WASAPI; ALSA or PulseAudio), the input and output devices,
+which channels to use, the sample rate (only rates both devices support) and the buffer size.
+Changes apply immediately. A mono plugin plays on both output channels; a stereo plugin fed by a single
+input channel gets it on both inputs.
+
+Settings and knob positions are remembered in `standalone.ini`, in
+`~/Library/Application Support/<id>/` (macOS), `%APPDATA%\<id>\` (Windows) or `~/.config/<id>/` (Linux),
+with dashes in the id replaced by underscores.
+
+On macOS the first launch asks for microphone access; if you deny it, the input stays silent until you
+allow it in *System Settings → Privacy & Security → Microphone*. Windows uses WASAPI in shared mode
+(no ASIO). DPF's own standalone, which always uses the default devices at 48 kHz, is still available
+with `--formats jack`.
+
 ## For AIs
 
 If a user sent you this repository and wants a plugin, your full instructions are in
@@ -102,9 +120,11 @@ framework/include/cookbook/
     dsp.hpp              helper DSP library available to recipes (filters, delay lines, LFO, oversampler…)
     Engine.hpp           smoothing, block splitting, denormals, safety net — shared by plugins and tests
     ParamInfo.hpp        parameter metadata
+    Controls.hpp         generic Dear ImGui controls (knobs, toggles, drop-downs), shared by editor and app
 framework/src/
     CookbookPlugin.cpp   generic DPF plugin wrapper
-    CookbookUI.cpp       generic Dear ImGui editor (knobs, toggles, drop-downs)
+    CookbookUI.cpp       plugin editor: connects the shared controls to the host
+    CookbookStandalone.cpp  standalone app: Engine + RtAudio + audio settings panel
 tools/recipe.py          validate / generate / test / render / build / install
 tools/harness/           offline test harness
 dpf/, dpf-widgets/       git submodules (DISTRHO Plugin Framework and its widgets)

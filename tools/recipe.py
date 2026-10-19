@@ -1118,7 +1118,7 @@ def main() -> int:
 
     p = sub.add_parser("build", help="build plugins with CMake (default: all recipes)")
     p.add_argument("recipes", nargs="*")
-    p.add_argument("--formats", help="comma list: jack,lv2,vst3,clap,au (default: all)")
+    p.add_argument("--formats", help="comma list: standalone,lv2,vst3,clap,au,jack (default: all but jack)")
     p.add_argument("--no-ui", action="store_true")
     p.set_defaults(func=cmd_build)
 

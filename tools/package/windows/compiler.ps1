@@ -2,7 +2,9 @@
 # It is the toolchain CI builds the Windows plugins with; MSVC cannot compile the pinned DPF widgets.
 # Dot-sourced by launch.ps1, and by CI to test the package the same way.
 
-$MinGWHome = Join-Path $env:LOCALAPPDATA "Plugin Cookbook\mingw64"
+# GCC breaks when its own folder has a space (the linker can't find default-manifest.o), and user folders
+# can have one (C:\Users\Ana Maria\...): ProgramData never does, and every user may create folders there.
+$MinGWHome = Join-Path $env:ProgramData "PluginCookbook\mingw64"
 
 function Get-MinGWBin {
     $bin = Join-Path $MinGWHome "bin"

@@ -61,6 +61,14 @@ knob_style = "modern"            # optional: "modern" (default), "vintage" (crea
                                  #   "flat" (thick arc), "minimal" (outline), "metal" (brushed, knurled)
 knob_color = "#E8DCC0"           # optional: knob body color, overrides the style's
 knob_ticks = true                # optional: scale marks around the knobs (vintage always has them)
+# Image skins (only when the user provides PNG images; they live in plugins/<id>/ next to the recipe):
+# layout           = "free"                  # "flow" (default: rows/groups) or "free" (each control at x, y)
+# background_image = "<id>/panel.png"        # free: the window takes its size; flow: drawn behind, cropped
+# image_scale      = 2                       # image pixels per screen pixel (2 = artwork made for retina)
+# knob_image       = "<id>/knob.png"         # draw knobs from an image instead of by code
+# knob_frames      = 64                      # 1 = one image that rotates; N = vertical filmstrip of N frames
+# size             = [520, 260]              # free layout without a background image: window size
+# labels           = false                   # hide names and values (when the artwork has its own labels)
 
 [[ui.group]]                     # optional: titled sections, top to bottom
 title   = "Tone"                 # optional ("" = no title)
@@ -84,6 +92,12 @@ description  = "Tooltip text."   # optional but recommended
                                  #   float/int: "knob", "small-knob", "large-knob", "slider"
                                  #   bool: "toggle", "button";  choice: "dropdown", "buttons"
 # knob_style = "vintage"         # optional, knob controls only: overrides [ui].knob_style for this one
+# x = 50                         # layout = "free": top-left of the control, in window pixels (required)
+# y = 92
+# size = 72                      # optional: knob diameter / slider, button or button-row width
+# label = false                  # optional: show or hide this control's name (default: [ui].labels)
+# value = false                  # optional: show or hide its value text
+# knob_image = "<id>/big.png"    # optional, knobs only: its own image (and knob_frames)
 
 [dsp]
 code = '''

@@ -707,7 +707,7 @@ function autoGrow() {
 // interface editor: a preview drawn like the plugin's editor (same layout rules and colors as
 // framework/include/cookbook/Controls.hpp and tools/recipe.py), plus an inspector that rewrites [ui]
 
-const uiEd = { tab: "recipe", model: null, selected: null, width: null, timer: null, seq: 0, hits: [] };
+const uiEd = { tab: "recipe", model: null, selected: null, width: null, timer: null, seq: 0, hits: [], assets: [] };
 
 const PALETTE = {
   dark:  { bg: "#17181b", panel: "#24262b", text: "#e8e6e1", muted: "#8a8d93", border: "#34373d", frame: "#24262b", track: "#2e3036", button: "#34373e" },
@@ -735,6 +735,7 @@ async function loadUiModel() {
     const { model } = await api("/api/ui/model", { text });
     uiEd.model = model;
     uiEd.width = null;
+    api(`/api/assets?id=${encodeURIComponent(model.id)}`).then((r) => { uiEd.assets = r.assets; renderInspector(); }).catch(() => {});
     if (uiEd.selected && !model.params.some((p) => p.symbol === uiEd.selected)) uiEd.selected = null;
     showUiError(null);
     renderInspector();
@@ -918,34 +919,218 @@ function drawKnob(c, kx, ky, r, t, origin, style, bodyColor, ticks, pal, accent)
   }
 }
 
+// Images: loaded once per name, through the studio server.
+const imgCache = {};
+function imageFor(name) {
+  if (!name || !uiEd.model) return null;
+  const key = uiEd.model.id + "/" + name;
+  if (!imgCache[key]) {
+    const img = new Image();
+    img.onload = () => renderPreview();
+    img.src = `/api/asset?id=${encodeURIComponent(uiEd.model.id)}&name=${encodeURIComponent(name)}&token=${encodeURIComponent(TOKEN)}`;
+    imgCache[key] = img;
+  }
+  const img = imgCache[key];
+  return img.complete && img.naturalWidth ? img : null;
+}
+
+const KNOBS = ["knob", "small-knob", "large-knob"];
+function knobImageOf(p) {
+  const m = uiEd.model;
+  if (!KNOBS.includes(p.control)) return ["", 1];
+  return [p.knob_image || m.ui.knob_image || "", p.knob_frames || m.ui.knob_frames || 1];
+}
+
+// Free layout: mirrors free_box() in tools/recipe.py.
+function freeBox(p) {
+  const m = uiEd.model, G = m.geometry;
+  if (KNOBS.includes(p.control)) {
+    const [img, frames] = knobImageOf(p);
+    let d = G.free_box[p.control][0];
+    const dims = img && m.images[img];
+    if (dims) d = (dims[1] >= dims[0] ? dims[0] : dims[0] / frames) / m.ui.image_scale;
+    d = p.size || d;
+    return [d, d];
+  }
+  if (p.control === "buttons") return [p.size || cellSize(p)[0] - 16, 28];
+  const [w, h] = G.free_box[p.control];
+  return [p.control === "toggle" ? w : (p.size || w), h];
+}
+
+function freeBase() {
+  const m = uiEd.model;
+  if (m.ui.size) return m.ui.size;
+  const dims = m.images[m.ui.background_image];
+  return dims ? [Math.round(dims[0] / m.ui.image_scale), Math.round(dims[1] / m.ui.image_scale)] : [m.width, m.height];
+}
+
+function showsLabel(p) { return p.label !== null && p.label !== undefined ? p.label : uiEd.model.ui.labels; }
+function showsValueText(p) { return p.value !== null && p.value !== undefined ? p.value : uiEd.model.ui.labels; }
+
+// Draws one control inside its box; mirrors ControlsView::drawControl(). Returns whether it shows a value.
+function drawControl(c, p, bx, by, bw, bh, pal, accent) {
+  const m = uiEd.model;
+  const v = p.default;
+  const rrect = (x, y, w, h, r, fill) => { c.fillStyle = fill; c.beginPath(); c.roundRect(x, y, w, h, r); c.fill(); };
+  const origin = p.min < 0 && p.max > 0 && p.scale !== "log" ? toNorm(p, 0) : 0;
+  const t = Math.min(1, Math.max(0, toNorm(p, v)));
+  if (KNOBS.includes(p.control)) {
+    const d = Math.min(bw, bh);
+    const [imgName, frames] = knobImageOf(p);
+    const img = imageFor(imgName);
+    if (img) {
+      if (frames <= 1) {
+        c.save(); c.translate(bx + d / 2, by + d / 2); c.rotate((t - 0.5) * Math.PI * 1.5);
+        c.drawImage(img, -d / 2, -d / 2, d, d); c.restore();
+      } else {
+        const f = Math.round(t * (frames - 1)), vertical = img.naturalHeight >= img.naturalWidth;
+        const fw = vertical ? img.naturalWidth : img.naturalWidth / frames;
+        const fh = vertical ? img.naturalHeight / frames : img.naturalHeight;
+        c.drawImage(img, vertical ? 0 : f * fw, vertical ? f * fh : 0, fw, fh, bx, by, d, d);
+      }
+    } else {
+      drawKnob(c, bx + d / 2, by + d / 2, d / 2, t, origin, p.knob_style || m.ui.knob_style, m.ui.knob_color, m.ui.knob_ticks, pal, accent);
+    }
+    return true;
+  }
+  if (p.control === "slider") {
+    const sy = by + bh / 2, th = Math.max(3, bh * 0.22);
+    rrect(bx, sy - th / 2, bw, th, th / 2, pal.track);
+    const xv = bx + bw * t, xo = bx + bw * origin;
+    if (Math.abs(xv - xo) > 0.5) rrect(Math.min(xv, xo), sy - th / 2, Math.abs(xv - xo), th, th / 2, accent);
+    c.fillStyle = pal.button; c.beginPath(); c.arc(xv, sy, bh * 0.42, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = accent; c.lineWidth = Math.max(1, bh * 0.07); c.stroke();
+    return true;
+  }
+  if (p.control === "toggle") {
+    const on = v > 0.5;
+    rrect(bx, by, bw, bh, bh / 2, on ? accent : pal.track);
+    c.fillStyle = on ? "#ffffff" : pal.muted;
+    c.beginPath(); c.arc(on ? bx + bw - bh / 2 : bx + bh / 2, by + bh / 2, bh * 0.375, 0, Math.PI * 2); c.fill();
+    return true;
+  }
+  if (p.control === "button") {
+    const on = v > 0.5;
+    rrect(bx, by, bw, bh, 5, on ? accent : pal.button);
+    const label = on ? "On" : "Off";
+    c.fillStyle = on ? onAccent(accent) : pal.text;
+    c.fillText(label, bx + (bw - c.measureText(label).width) / 2, by + (bh - 15) / 2 + 1);
+    return false;
+  }
+  if (p.control === "dropdown") {
+    const h = 19;
+    rrect(bx, by, bw, h, 4, pal.frame);
+    c.fillStyle = pal.button; c.beginPath(); c.roundRect(bx + bw - h, by, h, h, [0, 4, 4, 0]); c.fill();
+    c.fillStyle = pal.text; c.beginPath();
+    c.moveTo(bx + bw - h + 5, by + 7); c.lineTo(bx + bw - 5, by + 7); c.lineTo(bx + bw - h / 2, by + 13); c.fill();
+    c.save(); c.beginPath(); c.rect(bx, by, bw - h, h); c.clip();
+    c.fillStyle = pal.text; c.fillText(p.choices[Math.round(v)] || "", bx + 4, by + 3); c.restore();
+    return false;
+  }
+  if (p.control === "buttons") {
+    const n = p.choices.length, seg = bw / n, cur = Math.round(v);
+    p.choices.forEach((label, k) => {
+      const radii = n === 1 ? 5 : k === 0 ? [5, 0, 0, 5] : k === n - 1 ? [0, 5, 5, 0] : 0;
+      c.fillStyle = k === cur ? accent : pal.button;
+      c.beginPath(); c.roundRect(bx + k * seg, by, seg - (k < n - 1 ? 1 : 0), bh, radii); c.fill();
+      c.save(); c.beginPath(); c.rect(bx + k * seg, by, seg, bh); c.clip();
+      c.fillStyle = k === cur ? onAccent(accent) : pal.text;
+      c.fillText(label, bx + k * seg + Math.max(4, (seg - c.measureText(label).width) / 2), by + (bh - 15) / 2 + 1);
+      c.restore();
+    });
+    return false;
+  }
+  return false;
+}
+
+// Flow layout: the control's box inside its cell; mirrors ControlsView::drawCell().
+function flowBox(p, cx, cy, cw) {
+  const top = cy + 24;
+  switch (p.control) {
+    case "slider": return { x: cx + 12, y: top + 2, w: cw - 24, h: 20, valueY: top + 30 };
+    case "toggle": return { x: cx + (cw - 46) / 2, y: top + 16, w: 46, h: 24, valueY: top + 58 + 8 };
+    case "button": return { x: cx + (cw - 84) / 2, y: top + 14, w: 84, h: 30, valueY: -1 };
+    case "dropdown": return { x: cx + 7, y: top + 16, w: cw - 14, h: 19, valueY: -1 };
+    case "buttons": return { x: cx + 8, y: top + 4, w: cw - 16, h: 28, valueY: -1 };
+    default: {
+      const d = p.control === "small-knob" ? 40 : p.control === "large-knob" ? 88 : 58;
+      return { x: cx + (cw - d) / 2, y: top, w: d, h: d, valueY: top + d + 8 };
+    }
+  }
+}
+
 function renderPreview() {
   const m = uiEd.model;
   if (!m) return;
-  const natural = naturalWidth();
+  const free = m.ui.layout === "free";
+  const G = m.geometry;
+  let W, H, L = null;
   const slider = $("pwidth");
-  slider.min = m.geometry.min_width;
-  slider.max = Math.round(Math.max(natural * 1.6, natural + 200));
-  const W = Math.round(uiEd.width || natural);
-  slider.value = W;
-  const L = layout(W);
-  const H = Math.round(L.height);
-  $("pwidthLabel").textContent = `${W} × ${H}`;
+  if (free) {
+    [W, H] = freeBase();
+    slider.closest("label").classList.add("hidden");
+  } else {
+    slider.closest("label").classList.remove("hidden");
+    const natural = naturalWidth();
+    slider.min = G.min_width;
+    slider.max = Math.round(Math.max(natural * 1.6, natural + 200));
+    W = Math.round(uiEd.width || natural);
+    slider.value = W;
+    L = layout(W);
+    H = Math.round(L.height);
+    $("pwidthLabel").textContent = `${W} × ${H}`;
+  }
 
   const cv = $("preview"), dpr = window.devicePixelRatio || 1;
   cv.width = W * dpr; cv.height = H * dpr;
   cv.style.width = W + "px";
+  cv.style.cursor = free ? "move" : "pointer";
   const c = cv.getContext("2d");
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const pal = PALETTE[m.ui.theme] || PALETTE.dark;
   const accent = m.ui.accent;
   const font = (px) => `${px}px "DejaVu Sans", Verdana, Geneva, sans-serif`;
   c.textBaseline = "top";
-
   c.fillStyle = m.ui.background || pal.bg;
   c.fillRect(0, 0, W, H);
 
+  // background image: the design itself (free) or a cover-cropped backdrop (flow)
+  const bg = imageFor(m.ui.background_image);
+  if (bg) {
+    if (free) c.drawImage(bg, 0, 0, W, H);
+    else {
+      const ia = bg.naturalWidth / bg.naturalHeight, wa = W / H;
+      let sx = 0, sy = 0, sw = bg.naturalWidth, sh = bg.naturalHeight;
+      if (ia > wa) { sw = bg.naturalHeight * wa; sx = (bg.naturalWidth - sw) / 2; }
+      else { sh = bg.naturalWidth / wa; sy = (bg.naturalHeight - sh) / 2; }
+      c.drawImage(bg, sx, sy, sw, sh, 0, 0, W, H);
+    }
+  }
+
+  const centered = (text, cx, cw, y, color) => {
+    c.fillStyle = color;
+    c.fillText(text, cx + Math.max(0, (cw - c.measureText(text).width) / 2), y);
+  };
+  c.font = font(13);
+  uiEd.hits = [];
+
+  if (free) {
+    for (const p of m.params) {
+      const [w, h] = freeBox(p);
+      const x = p.x || 0, y = p.y || 0;
+      if (showsLabel(p)) centered(p.short_name || p.name, x, w, y - 20, pal.muted);
+      const hasValue = drawControl(c, p, x, y, w, h, pal, accent);
+      if (hasValue && showsValueText(p)) centered(formatValue(p, p.default), x, w, y + h + 6, pal.text);
+      if (uiEd.selected === p.symbol) {
+        c.save(); c.setLineDash([4, 3]); c.strokeStyle = accent; c.lineWidth = 1.5;
+        c.strokeRect(x - 3, y - 3, w + 6, h + 6); c.restore();
+      }
+      uiEd.hits.push({ sym: p.symbol, x: x - 4, y: y - (showsLabel(p) ? 22 : 4), w: w + 8, h: h + (showsLabel(p) ? 26 : 8) });
+    }
+    return;
+  }
+
   // header
-  const G = m.geometry;
   c.font = font(13 * 1.45); c.fillStyle = pal.text; c.fillText(m.name, G.pad, 14);
   c.font = font(13);
   c.fillStyle = pal.muted;
@@ -958,81 +1143,37 @@ function renderPreview() {
   for (const t of L.titles) {
     c.fillStyle = pal.muted; c.fillText(t.title, G.pad, t.y + 6);
     const tw = c.measureText(t.title).width;
-    c.strokeStyle = pal.border; c.beginPath();
+    c.strokeStyle = pal.border; c.lineWidth = 1; c.beginPath();
     c.moveTo(G.pad + tw + 8, t.y + 6 + 7.5); c.lineTo(W - G.pad, t.y + 6 + 7.5); c.stroke();
   }
 
-  const centered = (text, cx, cw, y, color) => {
-    c.fillStyle = color;
-    c.fillText(text, cx + Math.max(0, (cw - c.measureText(text).width) / 2), y);
-  };
-  const rrect = (x, y, w, h, r, fill) => { c.fillStyle = fill; c.beginPath(); c.roundRect(x, y, w, h, r); c.fill(); };
-
-  uiEd.hits = [];
   for (const it of L.items) {
     const p = paramBySymbol(it.sym);
     const { x: cx, y: cy, w: cw } = it;
-    const top = cy + 24;
     centered(p.short_name || p.name, cx, cw, cy, pal.muted);
-    let valueY = -1;
-    const v = p.default;
-    if (["knob", "small-knob", "large-knob"].includes(p.control)) {
-      const d = p.control === "small-knob" ? 40 : p.control === "large-knob" ? 88 : 58;
-      const r = d / 2, kx = cx + (cw - d) / 2 + r, ky = top + r;
-      const t = Math.min(1, Math.max(0, toNorm(p, v)));
-      const origin = p.min < 0 && p.max > 0 && p.scale !== "log" ? toNorm(p, 0) : 0;
-      drawKnob(c, kx, ky, r, t, origin, p.knob_style || m.ui.knob_style, m.ui.knob_color, m.ui.knob_ticks, pal, accent);
-      valueY = top + d + 8;
-    } else if (p.control === "slider") {
-      const w = cw - 24, h = 20, sx = cx + 12, sy = top + 2 + h / 2, th = Math.max(3, h * 0.22);
-      const t = Math.min(1, Math.max(0, toNorm(p, v)));
-      const origin = p.min < 0 && p.max > 0 && p.scale !== "log" ? toNorm(p, 0) : 0;
-      rrect(sx, sy - th / 2, w, th, th / 2, pal.track);
-      const xv = sx + w * t, xo = sx + w * origin;
-      if (Math.abs(xv - xo) > 0.5) rrect(Math.min(xv, xo), sy - th / 2, Math.abs(xv - xo), th, th / 2, accent);
-      c.fillStyle = pal.button; c.beginPath(); c.arc(xv, sy, h * 0.42, 0, Math.PI * 2); c.fill();
-      c.strokeStyle = accent; c.lineWidth = Math.max(1, h * 0.07); c.stroke();
-      valueY = top + 30;
-    } else if (p.control === "toggle") {
-      const on = v > 0.5, tx = cx + (cw - 46) / 2, ty = top + 16;
-      rrect(tx, ty, 46, 24, 12, on ? accent : pal.track);
-      c.fillStyle = on ? "#ffffff" : pal.muted;
-      c.beginPath(); c.arc(on ? tx + 46 - 12 : tx + 12, ty + 12, 9, 0, Math.PI * 2); c.fill();
-      valueY = top + 58 + 8;
-    } else if (p.control === "button") {
-      const on = v > 0.5, bx = cx + (cw - 84) / 2, by = top + 14;
-      rrect(bx, by, 84, 30, 5, on ? accent : pal.button);
-      const label = on ? "On" : "Off";
-      c.fillStyle = on ? onAccent(accent) : pal.text;
-      c.fillText(label, bx + (84 - c.measureText(label).width) / 2, by + 8);
-    } else if (p.control === "dropdown") {
-      const w = cw - 14, h = 19, dx = cx + 7, dy = top + 16;
-      rrect(dx, dy, w, h, 4, pal.frame);
-      c.fillStyle = pal.button; c.beginPath(); c.roundRect(dx + w - h, dy, h, h, [0, 4, 4, 0]); c.fill();
-      c.fillStyle = pal.text; c.beginPath();
-      c.moveTo(dx + w - h + 5, dy + 7); c.lineTo(dx + w - 5, dy + 7); c.lineTo(dx + w - h / 2, dy + 13); c.fill();
-      c.save(); c.beginPath(); c.rect(dx, dy, w - h, h); c.clip();
-      c.fillStyle = pal.text; c.fillText(p.choices[Math.round(v)] || "", dx + 4, dy + 3); c.restore();
-    } else if (p.control === "buttons") {
-      const w = cw - 16, h = 28, n = p.choices.length, seg = w / n, bx = cx + 8, by = top + 4, cur = Math.round(v);
-      p.choices.forEach((label, k) => {
-        const radii = n === 1 ? 5 : k === 0 ? [5, 0, 0, 5] : k === n - 1 ? [0, 5, 5, 0] : 0;
-        c.fillStyle = k === cur ? accent : pal.button;
-        c.beginPath(); c.roundRect(bx + k * seg, by, seg - (k < n - 1 ? 1 : 0), h, radii); c.fill();
-        c.save(); c.beginPath(); c.rect(bx + k * seg, by, seg, h); c.clip();
-        c.fillStyle = k === cur ? onAccent(accent) : pal.text;
-        c.fillText(label, bx + k * seg + Math.max(4, (seg - c.measureText(label).width) / 2), by + 7);
-        c.restore();
-      });
-    }
-    if (valueY >= 0) centered(formatValue(p, v), cx, cw, valueY, pal.text);
-
+    const box = flowBox(p, cx, cy, cw);
+    drawControl(c, p, box.x, box.y, box.w, box.h, pal, accent);
+    if (box.valueY >= 0) centered(formatValue(p, p.default), cx, cw, box.valueY, pal.text);
     if (uiEd.selected === p.symbol) {
       c.save(); c.setLineDash([4, 3]); c.strokeStyle = accent; c.lineWidth = 1.5;
       c.beginPath(); c.roundRect(cx + 2, cy - 4, cw - 4, it.h - 2, 6); c.stroke(); c.restore();
     }
-    uiEd.hits.push({ sym: p.symbol, x: cx, y: cy - 4, w: cw, h: it.h });
+    uiEd.hits.push({ sym: p.symbol, x: cx, y: cy - 4, w: cw, h: it.h, box });
   }
+}
+
+// Switching to the free layout starts every control where the flow layout had it.
+function toFreeLayout() {
+  const m = uiEd.model;
+  const W = Math.round(uiEd.width || naturalWidth());
+  const L = layout(W);
+  for (const it of L.items) {
+    const p = paramBySymbol(it.sym);
+    const box = flowBox(p, it.x, it.y, it.w);
+    if (p.x === null || p.x === undefined) { p.x = Math.round(box.x); p.y = Math.round(box.y); }
+  }
+  if (!m.ui.size && !m.ui.background_image) m.ui.size = [W, Math.round(L.height)];
+  m.ui.layout = "free";
 }
 
 // ----- inspector
@@ -1094,8 +1235,25 @@ function renderInspector() {
     onchange: (e) => { m.ui.knob_ticks = e.target.checked; changed(); } })));
 
   box.append(el("h3", {}, "Layout"));
-  box.append(el("p", { class: "hint" }, "Drag controls to reorder them or move them between groups. Click a control to change how it is drawn."));
-  m.groups.forEach((g, gi) => {
+  const free = m.ui.layout === "free";
+  const arrange = el("select", { onchange: (e) => {
+    if (e.target.value === "free") toFreeLayout(); else m.ui.layout = "flow";
+    changed();
+  } }, el("option", { value: "flow" }, "In rows (groups)"), el("option", { value: "free" }, "Free position"));
+  arrange.value = m.ui.layout;
+  box.append(field("Arrange", arrange));
+  if (free) {
+    box.append(el("p", { class: "hint" }, "Drag controls on the preview (Shift: 1 px steps). Without a background image, set the window size."));
+    if (!m.ui.background_image) {
+      const size = m.ui.size || freeBase();
+      const num = (i) => el("input", { type: "text", value: size[i], style: "width:70px",
+        onchange: (e) => { const v = Math.max(120, Math.min(2400, parseInt(e.target.value, 10) || size[i])); m.ui.size = [...(m.ui.size || size)]; m.ui.size[i] = v; changed(); } });
+      box.append(field("Window", num(0), "×", num(1)));
+    }
+  } else {
+    box.append(el("p", { class: "hint" }, "Drag controls to reorder them or move them between groups. Click a control to change how it is drawn."));
+  }
+  if (!free) m.groups.forEach((g, gi) => {
     const chips = el("div", { class: "chips" });
     const card = el("div", { class: "gcard" },
       el("div", { class: "ghead" },
@@ -1123,7 +1281,65 @@ function renderInspector() {
     card.addEventListener("drop", (e) => { e.preventDefault(); card.classList.remove("over"); moveParam(e.dataTransfer.getData("text/plain"), gi, null); });
     box.append(card);
   });
-  box.append(el("button", { onclick: () => { m.groups.push({ title: "New group", columns: 0, params: [] }); changed(); } }, "+ Add group"));
+  if (!free) box.append(el("button", { onclick: () => { m.groups.push({ title: "New group", columns: 0, params: [] }); changed(); } }, "+ Add group"));
+  if (free) {
+    const chips = el("div", { class: "chips" });
+    for (const p of m.params)
+      chips.append(el("span", { class: "pchip" + (uiEd.selected === p.symbol ? " sel" : ""),
+        onclick: () => { uiEd.selected = p.symbol; renderInspector(); renderPreview(); } },
+        p.short_name || p.name, el("small", {}, CONTROL_LABELS[p.control])));
+    box.append(chips);
+  }
+
+  // images
+  box.append(el("h3", {}, "Images"));
+  box.append(el("p", { class: "hint" }, "PNG files, saved next to the recipe in plugins/" + m.id + "/. Draw them at twice the size and set Scale to 2x for sharp retina screens."));
+  const imageNames = () => {
+    const names = new Set(Object.keys(m.images));
+    for (const a of uiEd.assets) names.add(a.name);
+    return [...names].sort();
+  };
+  const useImage = (name) => {
+    const a = uiEd.assets.find((x) => x.name === name);
+    if (a) m.images[name] = [a.width, a.height];
+  };
+  const imageSelect = (value, none, onpick) => {
+    const sel = el("select", { onchange: (e) => { useImage(e.target.value); onpick(e.target.value); } }, el("option", { value: "" }, none));
+    for (const n of imageNames()) sel.append(el("option", { value: n }, n.split("/").pop()));
+    sel.value = value || "";
+    return sel;
+  };
+  box.append(field("Background", imageSelect(m.ui.background_image, "None", (v) => {
+    m.ui.background_image = v;
+    if (v && m.ui.layout === "free") m.ui.size = null;
+    changed();
+  })));
+  const scale = el("select", { onchange: (e) => { m.ui.image_scale = parseFloat(e.target.value); changed(); } },
+    el("option", { value: "1" }, "1x"), el("option", { value: "2" }, "2x (retina)"), el("option", { value: "3" }, "3x"));
+  scale.value = String(m.ui.image_scale);
+  box.append(field("Scale", scale));
+  box.append(field("Knob image", imageSelect(m.ui.knob_image, "None (drawn)", (v) => { m.ui.knob_image = v; changed(); })));
+  if (m.ui.knob_image) {
+    box.append(field("Frames", el("input", { type: "text", value: m.ui.knob_frames, style: "width:70px",
+      title: "1 = a single image that rotates; N = a filmstrip of N frames",
+      onchange: (e) => { m.ui.knob_frames = Math.max(1, Math.min(256, parseInt(e.target.value, 10) || 1)); changed(); } })));
+  }
+  box.append(field("Labels", el("input", { type: "checkbox", checked: m.ui.labels,
+    onchange: (e) => { m.ui.labels = e.target.checked; changed(); } }), el("span", { class: "hint" }, "names and values")));
+  const upload = el("input", { type: "file", accept: "image/png", class: "hidden", onchange: async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const data = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.readAsDataURL(file); });
+    try {
+      const r = await api("/api/asset", { id: m.id, name: file.name, data });
+      uiEd.assets = r.assets;
+      useImage(r.name);
+      renderInspector();
+    } catch (err) {
+      showUiError("Could not add the image: " + err.message);
+    }
+  } });
+  box.append(upload, el("button", { onclick: () => upload.click() }, "+ Add image…"));
 
   const sel = uiEd.selected && paramBySymbol(uiEd.selected);
   if (sel) {
@@ -1136,7 +1352,26 @@ function renderInspector() {
     for (const opt of m.controls[sel.type]) s.append(el("option", { value: opt }, CONTROL_LABELS[opt]));
     s.value = sel.control;
     box.append(field("Draw as", s));
+    if (free) {
+      const num = (key, placeholder) => el("input", { type: "text", value: sel[key] ?? "", placeholder, style: "width:64px",
+        onchange: (e) => { const v = parseFloat(e.target.value); sel[key] = Number.isFinite(v) ? v : (key === "size" ? null : 0); changed(); } });
+      box.append(field("Position", num("x", "x"), num("y", "y")));
+      if (sel.control !== "toggle") box.append(field("Size", num("size", "auto")));
+    }
+    const tri = (key, label) => {
+      const s2 = el("select", { onchange: (e) => { sel[key] = e.target.value === "" ? null : e.target.value === "1"; changed(); } },
+        el("option", { value: "" }, "Default"), el("option", { value: "1" }, "Show"), el("option", { value: "0" }, "Hide"));
+      s2.value = sel[key] === null || sel[key] === undefined ? "" : sel[key] ? "1" : "0";
+      return field(label, s2);
+    };
+    box.append(tri("label", "Name"));
+    box.append(tri("value", "Value"));
     if (["knob", "small-knob", "large-knob"].includes(sel.control)) {
+      box.append(field("Image", imageSelect(sel.knob_image, "Same as all knobs", (v) => { sel.knob_image = v; changed(); })));
+      if (sel.knob_image) {
+        box.append(field("Frames", el("input", { type: "text", value: sel.knob_frames || 1, style: "width:70px",
+          onchange: (e) => { sel.knob_frames = Math.max(1, Math.min(256, parseInt(e.target.value, 10) || 1)); changed(); } })));
+      }
       const ks = el("select", { onchange: (e) => { sel.knob_style = e.target.value; changed(); } },
         el("option", { value: "" }, "Same as all knobs"));
       for (const k of m.knob_styles) ks.append(el("option", { value: k }, k[0].toUpperCase() + k.slice(1)));
@@ -1175,8 +1410,7 @@ function scheduleApply() {
       ui: m.ui,
       groups: m.groups.filter((g) => g.params.length),
       params: m.params,
-      controls: Object.fromEntries(m.params.map((p) => [p.symbol, p.control])),
-      knob_styles: Object.fromEntries(m.params.map((p) => [p.symbol, p.knob_style])),
+
     };
     try {
       const r = await api("/api/ui/apply", { text: $("editor").value, ui: payload });
@@ -1191,13 +1425,39 @@ function scheduleApply() {
   }, 250);
 }
 
-$("preview").addEventListener("click", (e) => {
+function previewPoint(e) {
   const r = $("preview").getBoundingClientRect();
-  const scale = (uiEd.width || naturalWidth()) / r.width;
-  const x = (e.clientX - r.left) * scale, y = (e.clientY - r.top) * scale;
-  const hit = uiEd.hits.find((h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h);
+  const W = parseFloat($("preview").style.width) || r.width;
+  const k = W / r.width;
+  return [(e.clientX - r.left) * k, (e.clientY - r.top) * k, k];
+}
+let drag = null;
+$("preview").addEventListener("pointerdown", (e) => {
+  if (!uiEd.model) return;
+  const [x, y] = previewPoint(e);
+  const hit = [...uiEd.hits].reverse().find((h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h);
   uiEd.selected = hit ? hit.sym : null;
+  if (hit && uiEd.model.ui.layout === "free") {
+    const p = paramBySymbol(hit.sym);
+    drag = { p, dx: x - (p.x || 0), dy: y - (p.y || 0), moved: false };
+    $("preview").setPointerCapture(e.pointerId);
+  }
   renderInspector(); renderPreview();
+});
+$("preview").addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const [x, y] = previewPoint(e);
+  const [W, H] = freeBase();
+  const [bw, bh] = freeBox(drag.p);
+  const snap = e.shiftKey ? 1 : 2;
+  drag.p.x = Math.max(0, Math.min(W - bw, Math.round((x - drag.dx) / snap) * snap));
+  drag.p.y = Math.max(0, Math.min(H - bh, Math.round((y - drag.dy) / snap) * snap));
+  drag.moved = true;
+  renderPreview();
+});
+$("preview").addEventListener("pointerup", () => {
+  if (drag && drag.moved) { renderInspector(); scheduleApply(); }
+  drag = null;
 });
 $("pwidth").addEventListener("input", (e) => { uiEd.width = parseInt(e.target.value, 10); renderPreview(); });
 for (const b of document.querySelectorAll(".tab")) b.onclick = () => showTab(b.dataset.tab);

@@ -12,6 +12,7 @@
 #include "RtAudio.h"
 
 #include "DistrhoPluginInfo.h"
+#include "RecipeAssets.hpp"
 #include "RecipeKernel.hpp"
 #include "cookbook/Engine.hpp"
 
@@ -499,7 +500,7 @@ private:
                 float* dst = out + d * frames + done;
                 if (streamOutChannels_ == 1 && kOuts == 2)
                     for (unsigned k = 0; k < n; ++k)
-                        dst[k] = 0.5f * (outs[0][k] + outs[1][k]);
+                        dst[k] = 0.5f * (outs[0][k] + outs[kOuts - 1][k]);
                 else
                     std::memcpy(dst, outs[std::min<unsigned>(d, kOuts - 1)], sizeof(float) * n);
                 for (unsigned k = 0; k < n; ++k)
@@ -545,17 +546,26 @@ class CookbookStandaloneWindow : public ImGuiStandaloneWindow,
 public:
     CookbookStandaloneWindow(Application& app, AudioHost& host)
         : ImGuiStandaloneWindow(app),
-          host_(host)
+          host_(host),
+          controls_(recipe::kAssets, recipe::kNumAssets)
     {
         const double s = getScaleFactor();
         Window::setTitle(DISTRHO_PLUGIN_NAME);
         Window::setResizable(true);
-        setGeometryConstraints(300 * s, (180 + kBarH) * s);
+        if (Meta::kFreeLayout)
+            setGeometryConstraints(Meta::kBaseWidth * 0.5 * s, (Meta::kBaseHeight * 0.5 + kBarH) * s, true);
+        else
+            setGeometryConstraints(300 * s, (180 + kBarH) * s);
         setSize(DISTRHO_UI_DEFAULT_WIDTH * s, (DISTRHO_UI_DEFAULT_HEIGHT + kBarH) * s);
         cui::applyStyle(COOKBOOK_UI_ACCENT, COOKBOOK_UI_LIGHT, COOKBOOK_UI_BACKGROUND);
         for (uint32_t i = 0; i < kNumParams; ++i)
             controls_.values[i] = host_.params[i].load();
         done();
+    }
+
+    ~CookbookStandaloneWindow() override
+    {
+        controls_.releaseImages();
     }
 
 protected:
@@ -572,12 +582,22 @@ protected:
                          ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse))
         {
-            cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE, COOKBOOK_UI_ACCENT);
             const float top = (cui::headerHeight(COOKBOOK_UI_SUBTITLE) + 8.f) * s;
+            const float area = height - kBarH * s;
             if (showSettings_)
-                drawSettings(s, width, top, height - kBarH * s);
+            {
+                cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE,
+                                COOKBOOK_UI_ACCENT);
+                drawSettings(s, width, top, area);
+            }
             else
-                controls_.draw(s, width, top, COOKBOOK_UI_ACCENT, *this);
+            {
+                controls_.drawBackground(width, area);
+                if (!Meta::kFreeLayout)
+                    cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE,
+                                    COOKBOOK_UI_ACCENT);
+                controls_.draw(s, width, top, COOKBOOK_UI_ACCENT, *this, area);
+            }
             drawBar(s, width, height);
         }
         ImGui::End();

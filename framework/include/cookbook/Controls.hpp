@@ -1,7 +1,9 @@
 // Plugin Cookbook — the generic Dear ImGui controls, shared by the plugin editor and the standalone app.
 // SPDX-License-Identifier: MIT
 //
-// Float/int parameters become knobs, bools become toggles, choices become drop-downs.
+// Float/int parameters become knobs or sliders, bools toggles or buttons, choices drop-downs or button rows.
+// Controls are laid out in rows by group ("flow"), or each at its own position over a background image
+// ("free"); knobs can be drawn by code or from an image (rotating, or a filmstrip of frames).
 //   drag           change value (hold Shift for fine control)
 //   mouse wheel    nudge value
 //   double-click   reset to default
@@ -13,6 +15,7 @@
 #pragma once
 
 #include "DearImGui.hpp"
+#include "OpenGL-include.hpp"
 
 #include "cookbook/ParamInfo.hpp"
 
@@ -21,6 +24,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+
+// PNG decoding: DPF's dgl library already contains stb_image (from NanoVG), with these names.
+extern "C" unsigned char* dpf_stbi_load_from_memory(const unsigned char* buffer, int len, int* x, int* y,
+                                                    int* channels, int desiredChannels);
+extern "C" void dpf_stbi_image_free(void* data);
 
 namespace cookbook {
 namespace ui {
@@ -401,12 +409,132 @@ struct ControlsHost
     virtual void endEdit(uint32_t index) = 0;
 };
 
-// The parameter controls, laid out by group. `values` mirrors the current parameter values; keep it updated
-// when they change from outside (host automation, loaded settings).
+// The recipe's images as OpenGL textures, loaded the first time they are drawn (a GL context is current
+// then). Call release() while the context is still current, before the editor goes away.
+class ImageSet
+{
+public:
+    struct Image
+    {
+        GLuint texture = 0;
+        int width = 0, height = 0;
+        bool tried = false;
+    };
+
+    ImageSet(const Asset* assets, uint32_t count) : assets_(assets), count_(std::min<uint32_t>(count, kMax)) {}
+
+    const Image* get(int32_t index)
+    {
+        if (index < 0 || (uint32_t)index >= count_)
+            return nullptr;
+        Image& img = images_[index];
+        if (!img.tried)
+        {
+            img.tried = true;
+            load(assets_[index], img);
+        }
+        return img.texture ? &img : nullptr;
+    }
+
+    void release()
+    {
+        for (uint32_t i = 0; i < count_; ++i)
+            if (images_[i].texture)
+            {
+                glDeleteTextures(1, &images_[i].texture);
+                images_[i] = Image();
+            }
+    }
+
+    static ImTextureID id(const Image& img) { return (ImTextureID)(intptr_t)img.texture; }
+
+private:
+    static constexpr uint32_t kMax = 64;
+
+    static void load(const Asset& asset, Image& img)
+    {
+        int w = 0, h = 0, channels = 0;
+        unsigned char* pixels = dpf_stbi_load_from_memory(asset.data, (int)asset.size, &w, &h, &channels, 4);
+        if (!pixels)
+            return;
+#ifndef GL_CLAMP_TO_EDGE
+# define GL_CLAMP_TO_EDGE 0x812F
+#endif
+        GLint previous = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
+        glGenTextures(1, &img.texture);
+        glBindTexture(GL_TEXTURE_2D, img.texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
+        dpf_stbi_image_free(pixels);
+        img.width = w;
+        img.height = h;
+    }
+
+    const Asset* assets_;
+    uint32_t count_;
+    Image images_[kMax];
+};
+
+// The drag behaviour every knob shares. Returns true when *t changed.
+inline bool knobDrag(float* t)
+{
+    if (!ImGui::IsItemActive())
+        return false;
+    const ImGuiIO& io = ImGui::GetIO();
+    const float delta = (io.MouseDelta.x - io.MouseDelta.y) / (io.KeyShift ? 2000.f : 200.f);
+    if (delta == 0.f)
+        return false;
+    const float nt = std::min(1.f, std::max(0.f, *t + delta));
+    const bool changed = nt != *t;
+    *t = nt;
+    return changed;
+}
+
+// A knob drawn from an image: with frames <= 1 the image rotates (pointing up = middle of the range,
+// 135 degrees each way); otherwise it is a filmstrip of `frames` equal frames, stacked vertically (or
+// side by side when the image is wider than tall), first frame = minimum.
+inline bool imageKnob(const char* id, float* t, float size, const ImageSet::Image& img, uint32_t frames)
+{
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton(id, ImVec2(size, size));
+    const bool changed = knobDrag(t);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImTextureID tex = ImageSet::id(img);
+    if (frames <= 1)
+    {
+        const float a = (*t - 0.5f) * 4.71238898f; // +-135 degrees
+        const float cs = std::cos(a), sn = std::sin(a), h = size * 0.5f;
+        const ImVec2 c(pos.x + h, pos.y + h);
+        auto corner = [&](float x, float y) { return ImVec2(c.x + x * cs - y * sn, c.y + x * sn + y * cs); };
+        dl->AddImageQuad(tex, corner(-h, -h), corner(h, -h), corner(h, h), corner(-h, h));
+    }
+    else
+    {
+        const float f = std::round(*t * (frames - 1));
+        const bool vertical = img.height >= img.width;
+        const ImVec2 uv0 = vertical ? ImVec2(0.f, f / frames) : ImVec2(f / frames, 0.f);
+        const ImVec2 uv1 = vertical ? ImVec2(1.f, (f + 1.f) / frames) : ImVec2((f + 1.f) / frames, 1.f);
+        dl->AddImage(tex, pos, ImVec2(pos.x + size, pos.y + size), uv0, uv1);
+    }
+    return changed;
+}
+
+// The parameter controls. `values` mirrors the current parameter values; keep it updated when they change
+// from outside (host automation, loaded settings).
 //
-// Layout: groups stack top to bottom. A titled group starts with its title. Within a group, controls fill
-// rows left to right; a row ends at the group's column limit or when the next control would not fit the
-// window. Rows are left-aligned inside a block that is centered in the window.
+// Flow layout: groups stack top to bottom. A titled group starts with its title. Within a group, controls
+// fill rows left to right; a row ends at the group's column limit or when the next control would not fit
+// the window. Rows are left-aligned inside a block that is centered in the window.
+//
+// Free layout: each control sits at its own box (Meta::kUiParams) over the background image; the whole
+// design scales uniformly to fit the window, centered.
 template <class Meta>
 class ControlsView
 {
@@ -415,13 +543,101 @@ public:
 
     float values[kSize];
 
-    ControlsView()
+    explicit ControlsView(const Asset* assets = nullptr, uint32_t numAssets = 0)
+        : images_(assets, numAssets)
     {
         for (uint32_t i = 0; i < Meta::kNumParams; ++i)
             values[i] = Meta::kParams[i].def;
     }
 
-    void draw(const float s, const float width, const float top, const uint32_t accentRgb, ControlsHost& host)
+    void releaseImages() { images_.release(); }
+
+    // Free layout: the scale and top-left of the design inside a width x height area.
+    static void freeTransform(float width, float height, float& scale, ImVec2& origin)
+    {
+        scale = std::min(width / Meta::kBaseWidth, height / Meta::kBaseHeight);
+        origin = ImVec2((width - Meta::kBaseWidth * scale) * 0.5f, (height - Meta::kBaseHeight * scale) * 0.5f);
+    }
+
+    // Draws the background image, if any, under everything else. Flow layout: it covers the window
+    // (cropped to keep its proportions). Free layout: it is the design itself.
+    void drawBackground(const float width, const float height)
+    {
+        const ImageSet::Image* img = images_.get(Meta::kBackgroundImage);
+        if (!img)
+            return;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 wp = ImGui::GetWindowPos();
+        if (Meta::kFreeLayout)
+        {
+            float sc;
+            ImVec2 o;
+            freeTransform(width, height, sc, o);
+            dl->AddImage(ImageSet::id(*img), ImVec2(wp.x + o.x, wp.y + o.y),
+                         ImVec2(wp.x + o.x + Meta::kBaseWidth * sc, wp.y + o.y + Meta::kBaseHeight * sc));
+            return;
+        }
+        const float ia = (float)img->width / (float)img->height, wa = width / std::max(1.f, height);
+        ImVec2 uv0(0, 0), uv1(1, 1);
+        if (ia > wa)
+        {
+            const float k = wa / ia;
+            uv0.x = (1.f - k) * 0.5f;
+            uv1.x = 1.f - uv0.x;
+        }
+        else
+        {
+            const float k = ia / wa;
+            uv0.y = (1.f - k) * 0.5f;
+            uv1.y = 1.f - uv0.y;
+        }
+        dl->AddImage(ImageSet::id(*img), wp, ImVec2(wp.x + width, wp.y + height), uv0, uv1);
+    }
+
+    // Flow layout: controls from `top` down. Free layout: `top` is ignored; `height` is the area's height.
+    // `s` is the display scale factor (HiDPI).
+    void draw(const float s, const float width, const float top, const uint32_t accentRgb, ControlsHost& host,
+              const float height = 0.f)
+    {
+        if (Meta::kFreeLayout)
+            drawFree(s, width, height, accentRgb, host);
+        else
+            drawFlow(s, width, top, accentRgb, host);
+    }
+
+private:
+    void drawFree(const float s, const float width, const float height, const uint32_t accentRgb,
+                  ControlsHost& host)
+    {
+        float sc;
+        ImVec2 o;
+        freeTransform(width, height, sc, o);
+        ImGui::SetWindowFontScale(sc / s);
+        const ImVec4 muted = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
+        const ImVec4 bright = ImGui::GetStyle().Colors[ImGuiCol_Text];
+        for (uint32_t i = 0; i < Meta::kNumParams; ++i)
+        {
+            const ParamInfo& p = Meta::kParams[i];
+            const UiParam& u = Meta::kUiParams[i];
+            const float bx = o.x + u.x * sc, by = o.y + u.y * sc, bw = u.w * sc, bh = u.h * sc;
+            if (u.label)
+            {
+                ImGui::SetCursorPosY(by - 20.f * sc);
+                centeredText(p.shortName[0] ? p.shortName : p.name, bx, bw, muted);
+            }
+            const bool hasValue = drawControl(i, bx, by, bw, bh, sc, accentRgb, host);
+            if (u.value && hasValue)
+            {
+                char buf[64];
+                formatValue(p, values[i], buf, sizeof(buf));
+                ImGui::SetCursorPosY(by + bh + 6.f * sc);
+                centeredText(buf, bx, bw, bright);
+            }
+        }
+        ImGui::SetWindowFontScale(1.f);
+    }
+
+    void drawFlow(const float s, const float width, const float top, const uint32_t accentRgb, ControlsHost& host)
     {
         const float avail = width - 2.f * kPad * s;
         const ImVec4 muted = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
@@ -486,25 +702,70 @@ public:
         }
     }
 
-private:
+    // Flow layout: a cell is the label, the control's box and the value underneath.
     void drawCell(const uint32_t i, const float cx, const float cy, const float cellW, const float s,
                   const uint32_t accentRgb, ControlsHost& host)
     {
         const ParamInfo& p = Meta::kParams[i];
+        const ImGuiStyle& st = ImGui::GetStyle();
+
+        ImGui::SetCursorPosY(cy);
+        centeredText(p.shortName[0] ? p.shortName : p.name, cx, cellW, st.Colors[ImGuiCol_TextDisabled]);
+
+        const float top = cy + 24.f * s;
+        float bx, by, bw, bh, valueY;
+        switch (p.control)
+        {
+        case Control::Slider:
+            bx = cx + 12.f * s, by = top + 2.f * s, bw = cellW - 24.f * s, bh = 20.f * s, valueY = top + 30.f * s;
+            break;
+        case Control::Toggle:
+            bw = 46.f * s, bh = 24.f * s, bx = cx + (cellW - bw) * 0.5f, by = top + 16.f * s;
+            valueY = top + kKnobSize * s + 8.f * s;
+            break;
+        case Control::Button:
+            bw = 84.f * s, bh = 30.f * s, bx = cx + (cellW - bw) * 0.5f, by = top + 14.f * s, valueY = -1.f;
+            break;
+        case Control::Dropdown:
+            bx = cx + 7.f * s, by = top + 16.f * s, bw = cellW - 14.f * s, bh = ImGui::GetFrameHeight(), valueY = -1.f;
+            break;
+        case Control::Buttons:
+            bx = cx + 8.f * s, by = top + 4.f * s, bw = cellW - 16.f * s, bh = 28.f * s, valueY = -1.f;
+            break;
+        default: { // knobs
+            const float d = knobDiameter(p.control) * s;
+            bx = cx + (cellW - d) * 0.5f, by = top, bw = bh = d, valueY = top + d + 8.f * s;
+            break;
+        }
+        }
+
+        drawControl(i, bx, by, bw, bh, s, accentRgb, host);
+
+        if (valueY >= 0.f)
+        {
+            char buf[64];
+            formatValue(p, values[i], buf, sizeof(buf));
+            ImGui::SetCursorPosY(valueY);
+            centeredText(buf, cx, cellW, st.Colors[ImGuiCol_Text]);
+        }
+    }
+
+    // The control itself inside its box (window-relative pixels), with all interaction. Returns whether
+    // this kind of control shows its value as text underneath.
+    bool drawControl(const uint32_t i, const float bx, const float by, const float bw, const float bh, const float s,
+                     const uint32_t accentRgb, ControlsHost& host)
+    {
+        const ParamInfo& p = Meta::kParams[i];
+        const UiParam& u = Meta::kUiParams[i];
         const ImVec4 accent = rgb(accentRgb);
         const ImGuiStyle& st = ImGui::GetStyle();
-        const ImVec4 muted = st.Colors[ImGuiCol_TextDisabled];
         const ImVec4 bright = st.Colors[ImGuiCol_Text];
 
         ImGui::PushID((int)i);
+        ImGui::SetCursorPos(ImVec2(bx, by));
 
-        ImGui::SetCursorPosY(cy);
-        centeredText(p.shortName[0] ? p.shortName : p.name, cx, cellW, muted);
-
-        const float controlTop = cy + 24.f * s;
-        bool changed = false, hovered = false, active = false;
+        bool changed = false, hovered = false, active = false, showsValue = false;
         float newValue = values[i];
-        float valueY = -1.f; // where the value text goes, if any
 
         switch (p.control)
         {
@@ -519,21 +780,14 @@ private:
             const float origin = (p.min < 0.f && p.max > 0.f && p.scale == Scale::Linear) ? toNormalized(p, 0.f) : 0.f;
             bool moved;
             if (p.control == Control::Slider)
-            {
-                const float w = cellW - 24.f * s;
-                ImGui::SetCursorPos(ImVec2(cx + 12.f * s, controlTop + 2.f * s));
-                moved = slider("##s", &t, w, 20.f * s, origin, accent);
-                valueY = controlTop + 30.f * s;
-            }
+                moved = slider("##s", &t, bw, bh, origin, accent);
+            else if (const ImageSet::Image* img = images_.get(u.image))
+                moved = imageKnob("##k", &t, std::min(bw, bh), *img, u.frames);
             else
-            {
-                const float d = knobDiameter(p.control) * s;
-                ImGui::SetCursorPos(ImVec2(cx + (cellW - d) * 0.5f, controlTop));
-                moved = knob("##k", &t, d, origin, accent, p.knobStyle, Meta::kKnobColor, Meta::kKnobTicks);
-                valueY = controlTop + d + 8.f * s;
-            }
+                moved = knob("##k", &t, std::min(bw, bh), origin, accent, p.knobStyle, Meta::kKnobColor, Meta::kKnobTicks);
             hovered = ImGui::IsItemHovered();
             active = ImGui::IsItemActive();
+            showsValue = true;
             if (moved)
             {
                 dragT_[i] = t;
@@ -546,14 +800,12 @@ private:
         }
         case Control::Toggle: {
             bool v = values[i] > 0.5f;
-            const ImVec2 size(46.f * s, 24.f * s);
-            ImGui::SetCursorPos(ImVec2(cx + (cellW - size.x) * 0.5f, controlTop + 16.f * s));
             ImGuiTogglePalette onPalette = {};
             onPalette.Frame = accent;
             onPalette.FrameHover = mix(accent, bright, 0.15f);
             ImGuiToggleConfig cfg;
             cfg.Flags = ImGuiToggleFlags_Animated;
-            cfg.Size = size;
+            cfg.Size = ImVec2(bw, bh);
             cfg.On.Palette = &onPalette;
             if (ImGui::Toggle("##t", &v, cfg))
             {
@@ -561,15 +813,13 @@ private:
                 changed = true;
             }
             hovered = ImGui::IsItemHovered();
-            valueY = controlTop + kKnobSize * s + 8.f * s;
+            showsValue = true;
             break;
         }
         case Control::Button: {
             const bool on = values[i] > 0.5f;
-            const ImVec2 size(84.f * s, 30.f * s);
-            ImGui::SetCursorPos(ImVec2(cx + (cellW - size.x) * 0.5f, controlTop + 14.f * s));
             const ImVec2 pos = ImGui::GetCursorScreenPos();
-            if (ImGui::InvisibleButton("##b", size))
+            if (ImGui::InvisibleButton("##b", ImVec2(bw, bh)))
             {
                 newValue = on ? 0.f : 1.f;
                 changed = true;
@@ -578,18 +828,16 @@ private:
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const ImVec4 fill = on ? (hovered ? mix(accent, bright, 0.15f) : accent)
                                    : (hovered ? st.Colors[ImGuiCol_ButtonHovered] : st.Colors[ImGuiCol_Button]);
-            dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), ImGui::GetColorU32(fill), 5.f * s);
+            dl->AddRectFilled(pos, ImVec2(pos.x + bw, pos.y + bh), ImGui::GetColorU32(fill), 5.f * s);
             const char* label = on ? "On" : "Off";
             const ImVec2 ts = ImGui::CalcTextSize(label);
-            dl->AddText(ImVec2(pos.x + (size.x - ts.x) * 0.5f, pos.y + (size.y - ts.y) * 0.5f),
+            dl->AddText(ImVec2(pos.x + (bw - ts.x) * 0.5f, pos.y + (bh - ts.y) * 0.5f),
                         on ? onAccent(accentRgb) : ImGui::GetColorU32(bright), label);
             break;
         }
         case Control::Dropdown: {
             const int cur = (int)std::lround(values[i]);
-            const float comboW = cellW - 14.f * s;
-            ImGui::SetCursorPos(ImVec2(cx + (cellW - comboW) * 0.5f, controlTop + 16.f * s));
-            ImGui::SetNextItemWidth(comboW);
+            ImGui::SetNextItemWidth(bw);
             const char* preview = (cur >= 0 && (uint32_t)cur < p.numChoices) ? p.choices[cur] : "";
             if (ImGui::BeginCombo("##c", preview))
             {
@@ -611,16 +859,14 @@ private:
         }
         case Control::Buttons: {
             const int cur = (int)std::lround(values[i]);
-            const float w = cellW - 16.f * s, h = 28.f * s;
-            const float segW = w / (float)std::max<uint32_t>(1, p.numChoices);
-            const float x0 = cx + 8.f * s;
+            const float segW = bw / (float)std::max<uint32_t>(1, p.numChoices);
             ImDrawList* dl = ImGui::GetWindowDrawList();
             for (uint32_t c = 0; c < p.numChoices; ++c)
             {
                 ImGui::PushID((int)c);
-                ImGui::SetCursorPos(ImVec2(x0 + c * segW, controlTop + 4.f * s));
+                ImGui::SetCursorPos(ImVec2(bx + c * segW, by));
                 const ImVec2 pos = ImGui::GetCursorScreenPos();
-                if (ImGui::InvisibleButton("##seg", ImVec2(segW, h)) && (int)c != cur)
+                if (ImGui::InvisibleButton("##seg", ImVec2(segW, bh)) && (int)c != cur)
                 {
                     newValue = (float)c;
                     changed = true;
@@ -633,11 +879,11 @@ private:
                                           : c == 0 ? ImDrawFlags_RoundCornersLeft
                                           : c + 1 == p.numChoices ? ImDrawFlags_RoundCornersRight
                                           : ImDrawFlags_RoundCornersNone;
-                dl->AddRectFilled(pos, ImVec2(pos.x + segW - (c + 1 < p.numChoices ? 1.f * s : 0.f), pos.y + h),
+                dl->AddRectFilled(pos, ImVec2(pos.x + segW - (c + 1 < p.numChoices ? 1.f * s : 0.f), pos.y + bh),
                                   ImGui::GetColorU32(fill), 5.f * s, corners);
                 const ImVec2 ts = ImGui::CalcTextSize(p.choices[c]);
-                dl->PushClipRect(pos, ImVec2(pos.x + segW, pos.y + h), true);
-                dl->AddText(ImVec2(pos.x + std::max(4.f * s, (segW - ts.x) * 0.5f), pos.y + (h - ts.y) * 0.5f),
+                dl->PushClipRect(pos, ImVec2(pos.x + segW, pos.y + bh), true);
+                dl->AddText(ImVec2(pos.x + std::max(4.f * s, (segW - ts.x) * 0.5f), pos.y + (bh - ts.y) * 0.5f),
                             sel ? onAccent(accentRgb) : ImGui::GetColorU32(bright), p.choices[c]);
                 dl->PopClipRect();
                 ImGui::PopID();
@@ -693,17 +939,11 @@ private:
             host.endEdit(i);
         }
 
-        if (valueY >= 0.f)
-        {
-            char buf[64];
-            formatValue(p, values[i], buf, sizeof(buf));
-            ImGui::SetCursorPosY(valueY);
-            centeredText(buf, cx, cellW, bright);
-        }
-
         ImGui::PopID();
+        return showsValue;
     }
 
+    ImageSet images_;
     bool editing_[kSize] = {};
     float dragT_[kSize] = {};
 };

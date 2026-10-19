@@ -34,6 +34,23 @@ struct ParamInfo
     KnobStyle knobStyle;
 };
 
+// Editor-only details of a parameter.
+struct UiParam
+{
+    float x, y, w, h;   // free layout: the control's box, in unscaled pixels
+    bool label, value;  // show the name above / the value below
+    int32_t image;      // knob image: index into recipe::kAssets, -1 = drawn
+    uint32_t frames;    // 1 = the image rotates; N = vertical (or horizontal) filmstrip of N frames
+};
+
+// An image embedded in the plugin (PNG bytes).
+struct Asset
+{
+    const char* name;
+    const unsigned char* data;
+    uint32_t size;
+};
+
 // A section of the editor: an optional title and the parameters it shows, in order.
 struct UiGroup
 {

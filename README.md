@@ -80,6 +80,13 @@ scale marks; drag controls into titled groups; and pick how each one is drawn (k
 slider, toggle or button, drop-down or button row). It all goes into the recipe's `[ui]`, `[[ui.group]]`,
 `control` and `knob_style` keys, so the AI and the build see the same thing.
 
+For a fully custom look, switch **Arrange** to *Free position* and add PNG images: a background (the
+window takes its size) and a knob image — one picture that rotates, or a *filmstrip* of frames like the
+ones made with [KnobMan](https://www.g200kg.com/en/software/knobman.html). Drag each control into place on
+the preview. Images are saved in `plugins/<id>/` and compiled into the plugin, so commit that folder
+together with the recipe. Draw them at twice the size and set *Scale* to 2x for sharp retina screens.
+`examples/skin-demo` is a complete example.
+
 The AI runs through either:
 
 - **Claude Code**, if `claude` is installed and signed in — uses your Claude subscription, no API key.

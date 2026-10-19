@@ -402,16 +402,23 @@ def save_recipe(text: str) -> tuple[str | None, str | None]:
         return None, "The recipe needs [plugin] id = \"...\" (lowercase letters, digits and dashes)."
     dest = ROOT / "plugins" / f"{rid}.plugin.toml"
     dest.parent.mkdir(exist_ok=True)
+    # saving an example as your own plugin: bring its images along
+    images = ROOT / "plugins" / rid
+    example_images = ROOT / "examples" / rid
+    if not images.exists() and example_images.is_dir():
+        shutil.copytree(example_images, images)
     dest.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
     return rid, None
 
 
 def _recipe_path_for(text: str) -> Path:
+    """Where the recipe lives (plugins/ or examples/), so image paths resolve next to it."""
     try:
         rid = str(tomllib.loads(text).get("plugin", {}).get("id", "recipe"))
     except tomllib.TOMLDecodeError:
         rid = "recipe"
-    return ROOT / "plugins" / f"{rid}.plugin.toml"
+    existing = recipe_path(rid) if ID_RE.match(rid) else None
+    return existing or ROOT / "plugins" / f"{rid}.plugin.toml"
 
 
 def ui_model_for(text: str) -> tuple[dict | None, str | None]:
@@ -420,6 +427,45 @@ def ui_model_for(text: str) -> tuple[dict | None, str | None]:
     except recipe_tool.RecipeError as e:
         return None, str(e)
     return recipe_tool.ui_model(r), None
+
+
+def recipe_dir(recipe_id: str) -> Path:
+    path = recipe_path(recipe_id)
+    return path.parent if path else ROOT / "plugins"
+
+
+def asset_file(recipe_id: str, name: str) -> Path | None:
+    """An image path relative to the recipe's folder, refusing anything outside it."""
+    base = recipe_dir(recipe_id).resolve()
+    target = (base / name).resolve()
+    if base not in target.parents or target.suffix.lower() != ".png" or not target.is_file():
+        return None
+    return target
+
+
+def list_assets(recipe_id: str) -> list[dict]:
+    """PNG images in the recipe's own folder (plugins/<id>/), with their sizes."""
+    folder = recipe_dir(recipe_id) / recipe_id
+    out = []
+    for f in sorted(folder.glob("*.png")) if folder.is_dir() else []:
+        size = recipe_tool.png_size(f)
+        if isinstance(size, tuple):
+            out.append({"name": f"{recipe_id}/{f.name}", "width": size[0], "height": size[1]})
+    return out
+
+
+def save_asset(recipe_id: str, name: str, data: bytes) -> tuple[str | None, str | None]:
+    if not ID_RE.match(recipe_id):
+        return None, "save the recipe first"
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None, "only PNG images are supported"
+    if len(data) > recipe_tool.MAX_IMAGE_BYTES:
+        return None, f"images must be under {recipe_tool.MAX_IMAGE_BYTES // 1_000_000} MB"
+    stem = re.sub(r"[^a-z0-9-]+", "-", Path(name).stem.lower()).strip("-") or "image"
+    folder = ROOT / "plugins" / recipe_id
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{stem}.png").write_bytes(data)
+    return f"{recipe_id}/{stem}.png", None
 
 
 def apply_ui_to(text: str, ui: dict) -> tuple[str | None, dict | None, str | None]:
@@ -466,7 +512,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
-        if length <= 0 or length > 4_000_000:
+        if length <= 0 or length > 8_000_000:  # images arrive base64-encoded
             return {}
         try:
             return json.loads(self.rfile.read(length))
@@ -489,7 +535,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Security-Policy",
-                             "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
+                             "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+                             "img-src 'self' blob: data:")
             self.end_headers()
             self.wfile.write(body)
             return
@@ -512,6 +559,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if m:
             return self._stream(m.group(1))
 
+        if url.path == "/api/assets":
+            rid = (query.get("id") or [""])[0]
+            return self._json(200, {"assets": list_assets(rid) if ID_RE.match(rid) else []})
+
+        if url.path == "/api/asset":
+            rid = (query.get("id") or [""])[0]
+            f = asset_file(rid, (query.get("name") or [""])[0]) if ID_RE.match(rid) else None
+            if not f:
+                return self._json(404, {"error": "no such image"})
+            body = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -527,6 +592,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if err:
                 return self._json(400, {"error": err})
             return self._json(200, {"id": rid})
+
+        if url.path == "/api/asset":
+            import base64
+            try:
+                data = base64.b64decode(str(body.get("data", "")), validate=True)
+            except ValueError:
+                return self._json(400, {"error": "bad image data"})
+            name, err = save_asset(str(body.get("id", "")), str(body.get("name", "")), data)
+            if err:
+                return self._json(400, {"error": err})
+            return self._json(200, {"name": name, "assets": list_assets(str(body.get("id")))})
 
         if url.path == "/api/ui/model":
             model, err = ui_model_for(str(body.get("text", "")))

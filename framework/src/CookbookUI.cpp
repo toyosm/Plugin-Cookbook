@@ -7,6 +7,7 @@
 #include "DistrhoUI.hpp"
 #include "DistrhoStandaloneUtils.hpp"
 
+#include "RecipeAssets.hpp"
 #include "RecipeMeta.hpp"
 #include "cookbook/Controls.hpp"
 
@@ -21,11 +22,20 @@ public:
     using Meta = recipe::Meta;
 
     CookbookUI()
-        : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT)
+        : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT),
+          fControls(recipe::kAssets, recipe::kNumAssets)
     {
         const double scale = getScaleFactor();
-        setGeometryConstraints(260 * scale, 180 * scale);
+        if (Meta::kFreeLayout) // a fixed design: resize it, but keep its proportions
+            setGeometryConstraints(Meta::kBaseWidth * 0.5 * scale, Meta::kBaseHeight * 0.5 * scale, true);
+        else
+            setGeometryConstraints(260 * scale, 180 * scale);
         cui::applyStyle(COOKBOOK_UI_ACCENT, COOKBOOK_UI_LIGHT, COOKBOOK_UI_BACKGROUND);
+    }
+
+    ~CookbookUI() override
+    {
+        fControls.releaseImages(); // DPF keeps the GL context current while the UI is destroyed
     }
 
 protected:
@@ -57,8 +67,12 @@ protected:
                          ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoBringToFrontOnFocus))
         {
-            cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE, COOKBOOK_UI_ACCENT);
-            fControls.draw(s, width, (cui::headerHeight(COOKBOOK_UI_SUBTITLE) + 8.f) * s, COOKBOOK_UI_ACCENT, *this);
+            fControls.drawBackground(width, height);
+            if (!Meta::kFreeLayout) // a free layout's artwork carries its own title
+                cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE,
+                                COOKBOOK_UI_ACCENT);
+            fControls.draw(s, width, (cui::headerHeight(COOKBOOK_UI_SUBTITLE) + 8.f) * s, COOKBOOK_UI_ACCENT, *this,
+                           height);
             drawStandaloneStatus(s, height);
         }
         ImGui::End();

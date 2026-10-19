@@ -1,0 +1,98 @@
+# Image skin example: a brushed-metal panel (examples/skin-demo/panel.png, drawn at 2x), a 64-frame knob
+# filmstrip for Drive and Level, a single rotating knob image for Tone, and every control placed by hand.
+
+[plugin]
+id          = "skin-demo"
+name        = "Skin Demo"
+brand       = "Plugin Cookbook"
+brand_id    = "Ckbk"
+unique_id   = "SkDm"
+description = "A drive with an image skin: background, filmstrip knobs, free layout."
+category    = "distortion"
+inputs      = 1
+outputs     = 1
+
+[ui]
+accent           = "#E8A33D"
+layout           = "free"
+background_image = "skin-demo/panel.png"
+image_scale      = 2
+knob_image       = "skin-demo/knob-strip.png"
+knob_frames      = 64
+
+[[param]]
+symbol  = "drive"
+name    = "Drive"
+min     = 0.0
+max     = 100.0
+default = 35.0
+unit    = "%"
+x       = 50
+y       = 92
+
+[[param]]
+symbol      = "tone"
+name        = "Tone"
+min         = 400.0
+max         = 8000.0
+default     = 2400.0
+unit        = "Hz"
+scale       = "log"
+x           = 160
+y           = 92
+knob_image  = "skin-demo/knob.png"
+knob_frames = 1
+
+[[param]]
+symbol  = "level"
+name    = "Level"
+min     = -24.0
+max     = 6.0
+default = -6.0
+unit    = "dB"
+x       = 270
+y       = 92
+
+[[param]]
+symbol  = "bypass"
+name    = "Bypass"
+type    = "bool"
+control = "button"
+x       = 388
+y       = 84
+
+[[param]]
+symbol  = "mode"
+name    = "Clip"
+type    = "choice"
+choices = ["Soft", "Hard"]
+control = "buttons"
+x       = 380
+y       = 168
+size    = 100
+
+[dsp]
+code = '''
+#include "cookbook/dsp.hpp"
+
+class Kernel {
+public:
+    void prepare(double sampleRate, uint32_t) { tone_.reset(); sr_ = sampleRate; }
+    void reset() { tone_.reset(); }
+    void process(const float* const* in, float* const* out, uint32_t frames, const Params& p)
+    {
+        for (uint32_t i = 0; i < frames; ++i)
+        {
+            const float x = in[0][i];
+            if (p.bypass) { out[0][i] = x; continue; }
+            const float g = 1.f + p.drive[i] * 0.3f;
+            float y = p.mode == 0 ? std::tanh(x * g) : std::clamp(x * g, -1.f, 1.f);
+            tone_.setCutoff(p.tone[i], sr_);
+            out[0][i] = tone_.process(y) * dbToGain(p.level[i]);
+        }
+    }
+private:
+    OnePoleLowpass tone_;
+    double sr_ = 48000.0;
+};
+'''

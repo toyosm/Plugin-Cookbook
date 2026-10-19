@@ -25,7 +25,7 @@ public:
     {
         const double scale = getScaleFactor();
         setGeometryConstraints(260 * scale, 180 * scale);
-        cui::applyStyle(COOKBOOK_UI_ACCENT);
+        cui::applyStyle(COOKBOOK_UI_ACCENT, COOKBOOK_UI_LIGHT, COOKBOOK_UI_BACKGROUND);
     }
 
 protected:
@@ -57,8 +57,8 @@ protected:
                          ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoBringToFrontOnFocus))
         {
-            cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_ACCENT);
-            fControls.draw(s, width, (cui::kHeaderH + 8.f) * s, COOKBOOK_UI_ACCENT, COOKBOOK_UI_COLUMNS, *this);
+            cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE, COOKBOOK_UI_ACCENT);
+            fControls.draw(s, width, (cui::headerHeight(COOKBOOK_UI_SUBTITLE) + 8.f) * s, COOKBOOK_UI_ACCENT, *this);
             drawStandaloneStatus(s, height);
         }
         ImGui::End();

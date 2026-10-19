@@ -37,6 +37,8 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+import recipe as recipe_tool  # noqa: E402  (schema, validation and the editor layout live there)
 RECIPE_PY = ROOT / "tools" / "recipe.py"
 PROMPT = ROOT / "prompts" / "plugin-from-idea.md"
 STATIC = Path(__file__).resolve().parent / "static"
@@ -404,6 +406,33 @@ def save_recipe(text: str) -> tuple[str | None, str | None]:
     return rid, None
 
 
+def _recipe_path_for(text: str) -> Path:
+    try:
+        rid = str(tomllib.loads(text).get("plugin", {}).get("id", "recipe"))
+    except tomllib.TOMLDecodeError:
+        rid = "recipe"
+    return ROOT / "plugins" / f"{rid}.plugin.toml"
+
+
+def ui_model_for(text: str) -> tuple[dict | None, str | None]:
+    try:
+        r = recipe_tool.load_recipe_text(text, _recipe_path_for(text))
+    except recipe_tool.RecipeError as e:
+        return None, str(e)
+    return recipe_tool.ui_model(r), None
+
+
+def apply_ui_to(text: str, ui: dict) -> tuple[str | None, dict | None, str | None]:
+    try:
+        new_text = recipe_tool.apply_ui(text, ui)
+        r = recipe_tool.load_recipe_text(new_text, _recipe_path_for(new_text))
+    except recipe_tool.RecipeError as e:
+        return None, None, str(e)
+    except (KeyError, TypeError, ValueError) as e:
+        return None, None, f"bad layout: {e}"
+    return new_text, recipe_tool.ui_model(r), None
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # HTTP
 
@@ -498,6 +527,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if err:
                 return self._json(400, {"error": err})
             return self._json(200, {"id": rid})
+
+        if url.path == "/api/ui/model":
+            model, err = ui_model_for(str(body.get("text", "")))
+            if err:
+                return self._json(400, {"error": err})
+            return self._json(200, {"model": model})
+
+        if url.path == "/api/ui/apply":
+            ui = body.get("ui")
+            if not isinstance(ui, dict):
+                return self._json(400, {"error": "missing ui"})
+            text, model, err = apply_ui_to(str(body.get("text", "")), ui)
+            if err:
+                return self._json(400, {"error": err})
+            return self._json(200, {"text": text, "model": model})
 
         if url.path == "/api/run":
             kind = str(body.get("kind", ""))

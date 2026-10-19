@@ -29,7 +29,8 @@ adjust — see "How to interact with the user".
 - **Denormals** are flushed to zero during processing.
 - **Safety net.** Non-finite output is muted and output beyond ±16.0 is clamped. Treat this as a crash
   barrier, not as gain staging: the test suite fails a recipe that triggers it.
-- **The UI.** Knobs, toggles and drop-downs are generated from the parameter list. There is no custom
+- **The UI.** Knobs, sliders, toggles, buttons and drop-downs are generated from the parameter list;
+  `[ui]`, `[[ui.group]]` and each parameter's `control` arrange and style them. There is no custom
   graphics API.
 
 ### Recipe format
@@ -51,8 +52,17 @@ inputs      = 1                  # 1 = mono, 2 = stereo
 outputs     = 1                  # 1 = mono, 2 = stereo (1 in / 2 out is fine, e.g. a stereo chorus)
 
 [ui]                             # optional
-accent  = "#E8A33D"              # knob/toggle color
-columns = 4                      # max knobs per row (1-8)
+accent     = "#E8A33D"           # knob/toggle color
+columns    = 4                   # max controls per row (1-8)
+theme      = "dark"              # optional: "dark" (default) or "light"
+background = "#1B1D21"           # optional: window color, overrides the theme's
+subtitle   = "Tape-style drive"  # optional: small line under the plugin name (<= 60 chars)
+
+[[ui.group]]                     # optional: titled sections, top to bottom
+title   = "Tone"                 # optional ("" = no title)
+params  = ["drive", "tone"]      # symbols, in display order; each parameter in at most one group
+columns = 3                      # optional: overrides [ui].columns for this group
+                                 # parameters left out of every group are shown at the end
 
 [[param]]                        # one table per control, in display order (max 32)
 symbol       = "drive"           # C++ identifier: lowercase, digits, underscore; becomes p.drive
@@ -66,6 +76,9 @@ scale        = "linear"          # float only: "linear" or "log" (log needs min 
 smoothing_ms = 20                # float only: 0 = no smoothing; ~150-300 for delay times
 description  = "Tooltip text."   # optional but recommended
 # choices    = ["Soft", "Hard"]  # choice only
+# control    = "knob"            # optional, how it is drawn (first value is the default):
+                                 #   float/int: "knob", "small-knob", "large-knob", "slider"
+                                 #   bool: "toggle", "button";  choice: "dropdown", "buttons"
 
 [dsp]
 code = '''
@@ -180,6 +193,9 @@ need to make. Surface the choices and propose sensible defaults in one short mes
 - **Controls** — each with type, range, default and unit, e.g. "Drive (0–100 %, default 50),
   Tone (800 Hz–12 kHz, log, default 4 kHz), Level (−24 to +6 dB, default 0)". Keep it to the few
   controls that matter; 3–6 is typical.
+- **Layout** — only when there are more than about five controls: propose titled groups
+  ("Tone: Drive, Bias · Output: Level, Mix"). Mention a different control (slider, buttons) only where
+  it clearly reads better, e.g. buttons for a 2–3 way mode switch.
 
 End with: *"Confirm or adjust, then I'll generate the recipe."* and wait.
 

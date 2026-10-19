@@ -74,6 +74,11 @@ tested automatically. **Build**, **Install** and **Open app** are one click each
 live. If a test or the build fails, **Fix with AI** sends the log back; compiler errors are clickable and
 jump to the line in the recipe. You can also edit the recipe by hand, or start from an example.
 
+The **Interface** tab shows a live preview of the plugin's editor. Change the accent color, light or dark
+theme, background and subtitle; drag controls into titled groups; and pick how each one is drawn (knob in
+three sizes, slider, toggle or button, drop-down or button row). It all goes into the recipe's `[ui]`,
+`[[ui.group]]` and `control` keys, so the AI and the build see the same thing.
+
 The AI runs through either:
 
 - **Claude Code**, if `claude` is installed and signed in — uses your Claude subscription, no API key.

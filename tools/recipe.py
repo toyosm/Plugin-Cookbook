@@ -107,6 +107,29 @@ FORBIDDEN_IN_PROCESS = [
 
 DEFAULT_ACCENT = "#E8A33D"
 
+# Editor controls per parameter type; the first one is the default.
+CONTROLS = {
+    "float": ("knob", "small-knob", "large-knob", "slider"),
+    "int": ("knob", "small-knob", "large-knob", "slider"),
+    "bool": ("toggle", "button"),
+    "choice": ("dropdown", "buttons"),
+}
+THEMES = ("dark", "light")
+
+# Editor geometry in unscaled pixels. framework/include/cookbook/Controls.hpp and the Plugin Studio preview
+# (tools/studio/static/index.html) use the same numbers and the same layout rules: keep all three in sync.
+UI_PAD = 18
+UI_HEADER_H = 58
+UI_SUBTITLE_H = 16
+UI_TITLE_H = 28
+UI_GROUP_GAP = 6
+UI_BOTTOM = 12
+UI_MIN_WIDTH = 300
+UI_CELL = {  # control -> (width, height)
+    "knob": (118, 132), "small-knob": (92, 110), "large-knob": (150, 168), "slider": (236, 84),
+    "toggle": (118, 132), "button": (118, 132), "dropdown": (118, 132),
+}
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Data model
 
@@ -129,6 +152,14 @@ class Param:
     smoothing_ms: float
     description: str
     choices: list[str] = field(default_factory=list)
+    control: str = ""
+
+
+@dataclass
+class UiGroup:
+    title: str
+    columns: int        # 0 = [ui].columns
+    params: list[int]   # parameter indices
 
 
 @dataclass
@@ -150,6 +181,10 @@ class Recipe:
     uri: str
     accent: int
     columns: int
+    theme: str
+    background: int | None
+    subtitle: str
+    groups: list[UiGroup]  # as written in the recipe; empty = one untitled group with every parameter
     params: list[Param]
     code: str
     code_path: Path
@@ -213,7 +248,12 @@ def load_recipe(path: Path) -> Recipe:
     path = Path(path)
     if not path.exists():
         raise RecipeError(f"{path}: file not found")
-    text = path.read_text(encoding="utf-8")
+    return load_recipe_text(path.read_text(encoding="utf-8"), path)
+
+
+def load_recipe_text(text: str, path: Path) -> Recipe:
+    """Validates recipe `text`; `path` is used for messages, the file-name check and [dsp].file."""
+    path = Path(path)
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
@@ -299,7 +339,7 @@ def load_recipe(path: Path) -> Recipe:
     if not isinstance(ui, dict):
         _err(errors, "[ui] must be a table")
         ui = {}
-    _check_keys(errors, "[ui]", ui, {"accent", "columns"})
+    _check_keys(errors, "[ui]", ui, {"accent", "columns", "theme", "background", "subtitle", "group"})
     accent_s = ui.get("accent", DEFAULT_ACCENT)
     if not isinstance(accent_s, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", accent_s):
         _err(errors, f"[ui].accent '{accent_s}': use a hex color like \"#E8A33D\"")
@@ -309,6 +349,25 @@ def load_recipe(path: Path) -> Recipe:
     if not isinstance(columns, int) or isinstance(columns, bool) or not 1 <= columns <= 8:
         _err(errors, "[ui].columns: integer between 1 and 8")
         columns = 4
+    theme = ui.get("theme", "dark")
+    if theme not in THEMES:
+        _err(errors, f"[ui].theme: \"dark\" or \"light\"")
+        theme = "dark"
+    background = None
+    if "background" in ui:
+        bg = ui["background"]
+        if not isinstance(bg, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", bg):
+            _err(errors, f"[ui].background '{bg}': use a hex color like \"#202124\"")
+        else:
+            background = int(bg[1:], 16)
+    subtitle = ui.get("subtitle", "")
+    if not isinstance(subtitle, str) or len(subtitle) > 60:
+        _err(errors, "[ui].subtitle: a string of at most 60 characters")
+        subtitle = ""
+    raw_groups = ui.get("group", [])
+    if not isinstance(raw_groups, list):
+        _err(errors, "[ui] groups must be declared as [[ui.group]] tables")
+        raw_groups = []
 
     # [[param]]
     raw_params = data.get("param", [])
@@ -325,7 +384,7 @@ def load_recipe(path: Path) -> Recipe:
             _err(errors, f"{where}: must be a table")
             continue
         _check_keys(errors, where, rp, {"symbol", "name", "short_name", "type", "min", "max", "default", "unit",
-                                         "scale", "smoothing_ms", "description", "choices"})
+                                         "scale", "smoothing_ms", "description", "choices", "control"})
         sym = rp.get("symbol", "")
         where = f"[[param]] '{sym or idx + 1}'"
         if not isinstance(sym, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", sym):
@@ -429,7 +488,51 @@ def load_recipe(path: Path) -> Recipe:
             if not 0 <= smoothing <= 2000:
                 _err(errors, f"{where}: smoothing_ms must be within 0..2000")
 
-        params.append(Param(sym, pname, short, ptype, pmin, pmax, pdef, unit, scale, smoothing, desc, choices))
+        control = rp.get("control", CONTROLS[ptype][0])
+        if control not in CONTROLS[ptype]:
+            _err(errors, f"{where}: control for a {ptype} parameter must be one of "
+                         f"{', '.join(repr(c) for c in CONTROLS[ptype])}")
+            control = CONTROLS[ptype][0]
+
+        params.append(Param(sym, pname, short, ptype, pmin, pmax, pdef, unit, scale, smoothing, desc, choices,
+                            control))
+
+    # [[ui.group]] (needs the parameter symbols)
+    groups: list[UiGroup] = []
+    index_of = {p.symbol: i for i, p in enumerate(params)}
+    grouped: set[str] = set()
+    for gi, rg in enumerate(raw_groups):
+        where = f"[[ui.group]] #{gi + 1}"
+        if not isinstance(rg, dict):
+            _err(errors, f"{where}: must be a table")
+            continue
+        _check_keys(errors, where, rg, {"title", "params", "columns"})
+        title = rg.get("title", "")
+        if not isinstance(title, str) or len(title) > 40:
+            _err(errors, f"{where}: title must be a string of at most 40 characters")
+            title = ""
+        gcols = rg.get("columns", 0)
+        if "columns" in rg and (not isinstance(gcols, int) or isinstance(gcols, bool) or not 1 <= gcols <= 8):
+            _err(errors, f"{where}: columns must be an integer between 1 and 8")
+            gcols = 0
+        members = rg.get("params", [])
+        if not isinstance(members, list) or not members or not all(isinstance(m, str) for m in members):
+            _err(errors, f"{where}: params = [\"symbol\", ...] listing at least one parameter")
+            members = []
+        idxs = []
+        for m in members:
+            if m not in index_of:
+                _err(errors, f"{where}: no parameter with symbol '{m}'")
+            elif m in grouped:
+                _err(errors, f"{where}: parameter '{m}' is already in another group")
+            else:
+                grouped.add(m)
+                idxs.append(index_of[m])
+        groups.append(UiGroup(title, gcols, idxs))
+    if groups:
+        missing = [p.symbol for p in params if p.symbol not in grouped]
+        if missing:
+            warnings.append(f"[[ui.group]]: {', '.join(missing)} not in any group; shown at the end")
 
     # [dsp]
     dsp = data.get("dsp")
@@ -458,7 +561,8 @@ def load_recipe(path: Path) -> Recipe:
     recipe = Recipe(path=path, id=pid, name=name, brand=brand, brand_id=brand_id, unique_id=unique_id,
                     version=version, description=description, license=license_, homepage=homepage,
                     category=category, inputs=io["inputs"], outputs=io["outputs"], clap_id=clap_id, uri=uri,
-                    accent=accent, columns=columns, params=params, code=code, code_path=code_path,
+                    accent=accent, columns=columns, theme=theme, background=background, subtitle=subtitle,
+                    groups=groups, params=params, code=code, code_path=code_path,
                     code_line=code_line, warnings=warnings)
 
     if code:
@@ -561,15 +665,230 @@ def c_float(v: float) -> str:
     return s + "f"
 
 
-def ui_size(r: Recipe) -> tuple[int, int, int]:
+def default_columns(r: Recipe) -> int:
+    """Columns for groups that don't set their own. Five or six plain knobs read better as two rows of three."""
     n = max(1, len(r.params))
     cols = min(r.columns, n)
-    if n in (5, 6) and r.columns >= 4:
+    if not r.groups and n in (5, 6) and r.columns >= 4:
         cols = 3
-    rows = math.ceil(n / cols)
-    width = max(300, cols * 118 + 2 * 18)
-    height = 58 + 8 + rows * 132 + 12
-    return width, height, cols
+    return cols
+
+
+def effective_groups(r: Recipe) -> list[UiGroup]:
+    """The groups the editor draws: the recipe's, plus an untitled group for any parameter left out."""
+    groups = list(r.groups)
+    used = {i for g in groups for i in g.params}
+    rest = [i for i in range(len(r.params)) if i not in used]
+    if rest or not groups:
+        groups.append(UiGroup("", 0, rest))
+    return groups
+
+
+def cell_size(p: Param) -> tuple[int, int]:
+    if p.control == "buttons":
+        seg = max(len(c) for c in p.choices) * 7 + 16
+        return min(472, max(118, 16 + len(p.choices) * seg)), 84
+    return UI_CELL[p.control]
+
+
+def layout_rows(r: Recipe, g: UiGroup, avail: float) -> list[list[int]]:
+    """Greedy rows: a row ends at the group's column limit or when the next control doesn't fit."""
+    cols = g.columns or default_columns(r)
+    rows: list[list[int]] = []
+    row: list[int] = []
+    row_w = 0
+    for i in g.params:
+        w = cell_size(r.params[i])[0]
+        if row and (len(row) >= cols or row_w + w > avail):
+            rows.append(row)
+            row, row_w = [], 0
+        row.append(i)
+        row_w += w
+    if row:
+        rows.append(row)
+    return rows
+
+
+def ui_size(r: Recipe) -> tuple[int, int, int]:
+    groups = effective_groups(r)
+    header = UI_HEADER_H + (UI_SUBTITLE_H if r.subtitle else 0)
+    natural = max((sum(cell_size(r.params[i])[0] for i in row)
+                   for g in groups for row in layout_rows(r, g, float("inf"))), default=0)
+    width = max(UI_MIN_WIDTH, natural + 2 * UI_PAD)
+    height = header + 8
+    for g in groups:
+        if not g.params:
+            continue
+        if g.title:
+            height += UI_TITLE_H
+        for row in layout_rows(r, g, width - 2 * UI_PAD):
+            height += max(cell_size(r.params[i])[1] for i in row)
+        height += UI_GROUP_GAP
+    height += UI_BOTTOM - UI_GROUP_GAP
+    return width, height, default_columns(r)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Editor layout as data (used by Plugin Studio's interface editor)
+
+
+def ui_model(r: Recipe) -> dict:
+    width, height, cols = ui_size(r)
+    return {
+        "name": r.name,
+        "brand": r.brand,
+        "width": width,
+        "height": height,
+        "default_columns": cols,
+        "ui": {
+            "accent": f"#{r.accent:06X}",
+            "columns": r.columns,
+            "theme": r.theme,
+            "background": f"#{r.background:06X}" if r.background is not None else None,
+            "subtitle": r.subtitle,
+        },
+        "groups": [{"title": g.title, "columns": g.columns, "params": [r.params[i].symbol for i in g.params]}
+                   for g in effective_groups(r) if g.params],
+        "params": [{"symbol": p.symbol, "name": p.name, "short_name": p.short_name, "type": p.type, "min": p.min,
+                    "max": p.max, "default": p.default, "unit": p.unit, "scale": p.scale, "choices": p.choices,
+                    "control": p.control, "description": p.description} for p in r.params],
+        "controls": CONTROLS,
+        "geometry": {"pad": UI_PAD, "header": UI_HEADER_H, "subtitle": UI_SUBTITLE_H, "title": UI_TITLE_H,
+                     "gap": UI_GROUP_GAP, "bottom": UI_BOTTOM, "min_width": UI_MIN_WIDTH, "cells": UI_CELL},
+    }
+
+
+_TABLE_RE = re.compile(r"^\s*(\[\[?)\s*([A-Za-z0-9_.\- ]+?)\s*\]\]?\s*(#.*)?$")
+
+
+def _toml_tables(lines: list[str]) -> list[tuple[int, str]]:
+    """(line index, table name) of every table header, skipping the insides of multi-line strings."""
+    out = []
+    inside = None
+    for i, line in enumerate(lines):
+        if inside:
+            if line.count(inside) % 2 == 1:
+                inside = None
+            continue
+        m = _TABLE_RE.match(line)
+        if m:
+            out.append((i, ("[[" if m.group(1) == "[[" else "[") + m.group(2).replace(" ", "")))
+            continue
+        for delim in ("\'\'\'", '"""'):
+            if line.count(delim) % 2 == 1:
+                inside = delim
+                break
+    return out
+
+
+def _toml_str(v: str) -> str:
+    return json.dumps(v, ensure_ascii=False)
+
+
+def apply_ui(text: str, ui: dict) -> str:
+    """Rewrites the [ui] table, the [[ui.group]] tables and each parameter's `control` key from `ui`
+    (the shape ui_model() returns), leaving everything else in the recipe untouched."""
+    lines = text.split("\n")
+
+    # 1. drop [ui] and [[ui.group]]
+    tables = _toml_tables(lines)
+    keep = [True] * len(lines)
+    for n, (start, name) in enumerate(tables):
+        if name in ("[ui", "[[ui.group"):
+            end = tables[n + 1][0] if n + 1 < len(tables) else len(lines)
+            # comments right above the next table belong to it
+            while end - 1 > start and (not lines[end - 1].strip() or lines[end - 1].lstrip().startswith("#")):
+                end -= 1
+            for k in range(start, end):
+                keep[k] = False
+    lines = [l for l, k in zip(lines, keep) if k]
+
+    # 2. per-parameter control
+    controls = ui.get("controls", {})
+    tables = _toml_tables(lines)
+    edits: list[tuple[int, int, str | None]] = []  # (insert-at or replace index, mode, text)
+    for n, (start, name) in enumerate(tables):
+        if name != "[[param":
+            continue
+        end = tables[n + 1][0] if n + 1 < len(tables) else len(lines)
+        body = range(start + 1, end)
+        sym = ptype = None
+        key_width = 0
+        control_line = None
+        last_key = start
+        for k in body:
+            m = re.match(r'^(\s*)([A-Za-z_]+)(\s*)=\s*(.*)$', lines[k])
+            if not m:
+                continue
+            last_key = k
+            key, value = m.group(2), m.group(4)
+            if key == "symbol":
+                sym = (re.match(r'"([^"]*)"', value) or [None, None])[1]
+                key_width = len(m.group(2)) + len(m.group(3))
+            elif key == "type":
+                ptype = (re.match(r'"([^"]*)"', value) or [None, None])[1]
+            elif key == "control":
+                control_line = k
+        ptype = ptype or "float"
+        wanted = controls.get(sym)
+        default = CONTROLS.get(ptype, ("",))[0]
+        new = None
+        if wanted and wanted != default:
+            new = f'{"control".ljust(max(key_width, 8))}= {_toml_str(wanted)}'
+        if control_line is not None:
+            edits.append((control_line, 0, new))   # replace or delete
+        elif new:
+            edits.append((last_key + 1, 1, new))   # insert after the last key
+    for idx, mode, new in sorted(edits, key=lambda e: e[0], reverse=True):
+        if mode == 0:
+            if new is None:
+                del lines[idx]
+            else:
+                lines[idx] = new
+        else:
+            lines.insert(idx, new)
+
+    # 3. the new [ui] block, before the first parameter
+    u = ui.get("ui", {})
+    entries = [("accent", _toml_str(u.get("accent", DEFAULT_ACCENT)))]
+    if int(u.get("columns", 4)) != 4:
+        entries.append(("columns", str(int(u["columns"]))))
+    if u.get("theme", "dark") != "dark":
+        entries.append(("theme", _toml_str(u["theme"])))
+    if u.get("background"):
+        entries.append(("background", _toml_str(u["background"])))
+    if u.get("subtitle"):
+        entries.append(("subtitle", _toml_str(u["subtitle"])))
+    width = max(len(k) for k, _ in entries)
+    block = ["[ui]"] + [f"{k.ljust(width)} = {v}" for k, v in entries] + [""]
+
+    groups = [g for g in ui.get("groups", []) if g.get("params")]
+    order = [p["symbol"] for p in ui.get("params", [])]
+    trivial = (len(groups) == 1 and not groups[0].get("title") and not groups[0].get("columns")
+               and (not order or groups[0]["params"] == order))
+    if groups and not trivial:
+        for g in groups:
+            block.append("[[ui.group]]")
+            if g.get("title"):
+                block.append(f'title   = {_toml_str(g["title"])}')
+            block.append("params  = [" + ", ".join(_toml_str(p) for p in g["params"]) + "]")
+            if g.get("columns"):
+                block.append(f'columns = {int(g["columns"])}')
+            block.append("")
+
+    tables = _toml_tables(lines)
+    at = next((i for i, name in tables if name == "[[param"), None)
+    if at is None:
+        at = next((i for i, name in tables if name == "[dsp"), len(lines))
+    # keep comment lines that sit right above the first parameter attached to it
+    while at > 0 and lines[at - 1].lstrip().startswith("#"):
+        at -= 1
+    if at > 0 and lines[at - 1].strip():
+        block.insert(0, "")
+    lines[at:at] = block
+
+    out = "\n".join(lines)
+    return re.sub(r"\n{3,}", "\n\n", out)
 
 
 def gen_plugin_info(r: Recipe, with_ui: bool) -> str:
@@ -620,6 +939,9 @@ def gen_plugin_info(r: Recipe, with_ui: bool) -> str:
             "#define DISTRHO_UI_USER_RESIZABLE 1",
             f"#define COOKBOOK_UI_ACCENT 0x{r.accent:06X}",
             f"#define COOKBOOK_UI_COLUMNS {cols}",
+            f"#define COOKBOOK_UI_LIGHT {1 if r.theme == 'light' else 0}",
+            f"#define COOKBOOK_UI_BACKGROUND {('0x%06X' % r.background) if r.background is not None else -1}",
+            f"#define COOKBOOK_UI_SUBTITLE {c_str(r.subtitle)}",
         ]
     return "\n".join(lines) + "\n"
 
@@ -674,14 +996,25 @@ def gen_meta(r: Recipe) -> str:
     out.append(f"    static constexpr cookbook::ParamInfo kParams[{max(1, n)}] = {{")
     if n == 0:
         out.append('        { "none", "none", "", "", "", cookbook::ParamType::Float, cookbook::Scale::Linear, '
-                   "0.f, 1.f, 0.f, 0.f, nullptr, 0 },")
+                   "0.f, 1.f, 0.f, 0.f, nullptr, 0, cookbook::Control::Knob },")
     for p in r.params:
         ptype = {"float": "Float", "int": "Int", "bool": "Bool", "choice": "Choice"}[p.type]
         scale = "Log" if p.scale == "log" else "Linear"
         choices = f"kChoices_{p.symbol}, {len(p.choices)}" if p.type == "choice" else "nullptr, 0"
+        control = "".join(w.capitalize() for w in p.control.split("-"))
         out.append(f"        {{ {c_str(p.symbol)}, {c_str(p.name)}, {c_str(p.short_name)}, {c_str(p.unit)}, "
                    f"{c_str(p.description)}, cookbook::ParamType::{ptype}, cookbook::Scale::{scale}, "
-                   f"{c_float(p.min)}, {c_float(p.max)}, {c_float(p.default)}, {c_float(p.smoothing_ms)}, {choices} }},")
+                   f"{c_float(p.min)}, {c_float(p.max)}, {c_float(p.default)}, {c_float(p.smoothing_ms)}, {choices}, "
+                   f"cookbook::Control::{control} }},")
+    out.append("    };")
+    out.append("")
+    groups = [g for g in effective_groups(r) if g.params] or [UiGroup("", 0, [0])]
+    for gi, g in enumerate(groups):
+        out.append(f"    static constexpr uint32_t kGroup{gi}[{len(g.params)}] = {{ {', '.join(map(str, g.params))} }};")
+    out.append(f"    static constexpr uint32_t kNumGroups = {len(groups) if n else 0};")
+    out.append(f"    static constexpr cookbook::UiGroup kGroups[{len(groups)}] = {{")
+    for gi, g in enumerate(groups):
+        out.append(f"        {{ {c_str(g.title)}, {g.columns or default_columns(r)}, kGroup{gi}, {len(g.params)} }},")
     out.append("    };")
     out.append("")
     out.append("    // floatBuffers: per-sample buffers of the float parameters, in declaration order.")

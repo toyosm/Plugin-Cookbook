@@ -552,7 +552,7 @@ public:
         Window::setResizable(true);
         setGeometryConstraints(300 * s, (180 + kBarH) * s);
         setSize(DISTRHO_UI_DEFAULT_WIDTH * s, (DISTRHO_UI_DEFAULT_HEIGHT + kBarH) * s);
-        cui::applyStyle(COOKBOOK_UI_ACCENT);
+        cui::applyStyle(COOKBOOK_UI_ACCENT, COOKBOOK_UI_LIGHT, COOKBOOK_UI_BACKGROUND);
         for (uint32_t i = 0; i < kNumParams; ++i)
             controls_.values[i] = host_.params[i].load();
         done();
@@ -572,12 +572,12 @@ protected:
                          ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse))
         {
-            cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_ACCENT);
-            const float top = (cui::kHeaderH + 8.f) * s;
+            cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE, COOKBOOK_UI_ACCENT);
+            const float top = (cui::headerHeight(COOKBOOK_UI_SUBTITLE) + 8.f) * s;
             if (showSettings_)
                 drawSettings(s, width, top, height - kBarH * s);
             else
-                controls_.draw(s, width, top, COOKBOOK_UI_ACCENT, COOKBOOK_UI_COLUMNS, *this);
+                controls_.draw(s, width, top, COOKBOOK_UI_ACCENT, *this);
             drawBar(s, width, height);
         }
         ImGui::End();
@@ -653,8 +653,8 @@ private:
         const ImVec2 wp = ImGui::GetWindowPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(ImVec2(wp.x, wp.y + y), ImVec2(wp.x + width, wp.y + height),
-                          ImGui::GetColorU32(cui::rgb(0x1e1f23)));
-        dl->AddLine(ImVec2(wp.x, wp.y + y), ImVec2(wp.x + width, wp.y + y), ImGui::GetColorU32(cui::rgb(0x34373d)));
+                          ImGui::GetColorU32(ImGuiCol_MenuBarBg));
+        dl->AddLine(ImVec2(wp.x, wp.y + y), ImVec2(wp.x + width, wp.y + y), ImGui::GetColorU32(ImGuiCol_Border));
 
         const float rowY = y + (kBarH * s - ImGui::GetFrameHeight()) * 0.5f;
         ImGui::SetCursorPos(ImVec2(10.f * s, rowY));
@@ -697,7 +697,7 @@ private:
         const float db = peak > 1e-6f ? 20.f * std::log10(peak) : -120.f;
         const float t = std::min(1.f, std::max(0.f, (db + 60.f) / 60.f));
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(ImVec2(wp.x + lx, my), ImVec2(wp.x + lx + w, my + h), ImGui::GetColorU32(cui::rgb(0x2e3036)), 2.f);
+        dl->AddRectFilled(ImVec2(wp.x + lx, my), ImVec2(wp.x + lx + w, my + h), ImGui::GetColorU32(ImGuiCol_FrameBgActive), 2.f);
         if (t > 0.f)
             dl->AddRectFilled(ImVec2(wp.x + lx, my), ImVec2(wp.x + lx + w * t, my + h),
                               ImGui::GetColorU32(peak >= 0.99f ? cui::rgb(0xe5534b) : cui::rgb(COOKBOOK_UI_ACCENT)), 2.f);

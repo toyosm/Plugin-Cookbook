@@ -100,7 +100,7 @@
   #prompt:focus { border-color: #4a4e56; }
 
   /* editor + output */
-  #right { display: grid; grid-template-rows: auto minmax(120px, 1fr) auto minmax(110px, 38%); }
+  #right { display: grid; grid-template-rows: auto minmax(160px, 1fr) auto minmax(110px, 32%); }
   .toolbar { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); align-items: center; }
   .toolbar .spacer { flex: 1; }
   .toolbar .pos { color: var(--muted); font: 12px var(--mono); }
@@ -120,6 +120,43 @@
   #output .l-fail { color: var(--bad); }
   #output .l-cmd { color: var(--muted); }
   #output .l-link { text-decoration: underline dotted; cursor: pointer; }
+  /* tabs */
+  .tabs { display: flex; gap: 2px; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 2px; margin-right: 6px; }
+  .tab { border: 0; background: transparent; padding: 3px 10px; border-radius: 5px; color: var(--muted); }
+  .tab.active { background: var(--raised); color: var(--text); }
+  #slot { position: relative; min-height: 0; }
+  #slot > * { position: absolute; inset: 0; }
+
+  /* interface editor */
+  #uiPane { overflow: auto; padding: 14px; display: flex; flex-wrap: wrap; gap: 16px; align-content: flex-start; background: #141518; }
+  #previewBox { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  #preview { max-width: 100%; border-radius: 6px; box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgba(0,0,0,0.35); cursor: pointer; }
+  .pwidth { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; width: 100%; max-width: 420px; }
+  .pwidth input { flex: 1; accent-color: var(--accent); }
+  #inspector { flex: 0 1 300px; min-width: 260px; display: flex; flex-direction: column; gap: 10px; }
+  #inspector h3 { margin: 6px 0 0; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+  #inspector .hint { color: var(--muted); font-size: 12px; margin: -4px 0 0; }
+  .field { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; font-size: 13px; }
+  .field > span { color: var(--muted); }
+  .field input[type=text], .field select { width: 100%; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+  .field input[type=color] { width: 44px; height: 26px; padding: 0 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); }
+  .field .row { display: flex; align-items: center; gap: 8px; }
+  .gcard { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .gcard.over { border-color: var(--accent); }
+  .ghead { display: flex; gap: 6px; padding: 6px; border-bottom: 1px solid var(--line); }
+  .ghead input { flex: 1; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 3px 6px; }
+  .ghead input:hover, .ghead input:focus { border-color: var(--line); background: var(--raised); outline: none; }
+  .ghead select { background: var(--raised); border: 1px solid var(--line); border-radius: 5px; padding: 2px 4px; font-size: 12px; }
+  .ghead button { padding: 2px 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; min-height: 42px; }
+  .pchip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; background: var(--raised); border: 1px solid var(--line); cursor: grab; font-size: 12.5px; user-select: none; }
+  .pchip small { color: var(--muted); font-size: 11px; }
+  .pchip.sel { border-color: var(--accent); background: var(--accent-soft); }
+  .pchip.dragging { opacity: 0.4; }
+  .pchip.before { box-shadow: -3px 0 0 var(--accent); }
+  #uiError { flex-basis: 100%; }
+  .notice { padding: 10px 12px; border-radius: 8px; background: rgba(229, 83, 75, 0.12); border: 1px solid rgba(229, 83, 75, 0.45); white-space: pre-wrap; font-size: 13px; }
+
   .spin { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: s 0.8s linear infinite; display: inline-block; }
   @keyframes s { to { transform: rotate(360deg); } }
   .hidden { display: none !important; }
@@ -168,6 +205,7 @@
 
   <section id="right">
     <div class="toolbar">
+      <div class="tabs"><button class="tab active" data-tab="recipe">Recipe</button><button class="tab" data-tab="ui">Interface</button></div>
       <button id="saveBtn" title="Save (Cmd/Ctrl+S)">Save</button>
       <button id="testBtn" title="Compile the DSP and run the test suite">Test</button>
       <button id="buildBtn" title="Build VST3, AU, CLAP, LV2 and the standalone app">Build</button>
@@ -176,7 +214,17 @@
       <div class="spacer"></div>
       <span class="pos" id="pos"></span>
     </div>
-    <textarea id="editor" spellcheck="false" placeholder="The recipe (.plugin.toml) appears here. Describe a plugin in the chat, or pick one on the left."></textarea>
+    <div id="slot">
+      <textarea id="editor" spellcheck="false" placeholder="The recipe (.plugin.toml) appears here. Describe a plugin in the chat, or pick one on the left."></textarea>
+      <div id="uiPane" class="hidden">
+        <div id="uiError" class="hidden"></div>
+        <div id="previewBox">
+          <canvas id="preview"></canvas>
+          <label class="pwidth">Window width <input type="range" id="pwidth"><span id="pwidthLabel"></span></label>
+        </div>
+        <div id="inspector"></div>
+      </div>
+    </div>
     <div class="outhead">
       <span class="label" id="outLabel">Output</span>
       <span class="spin hidden" id="outSpin"></span>
@@ -336,6 +384,7 @@ function newPlugin() {
 
 function setEditor(text, saved) {
   $("editor").value = text;
+  if (uiEd.tab === "ui") setTimeout(loadUiModel, 0);
   $("editor").setSelectionRange(0, 0);
   $("editor").scrollTop = 0;
   if (saved) state.savedText = text;
@@ -653,6 +702,421 @@ function autoGrow() {
   p.style.height = "auto";
   p.style.height = Math.min(p.scrollHeight, 180) + "px";
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// interface editor: a preview drawn like the plugin's editor (same layout rules and colors as
+// framework/include/cookbook/Controls.hpp and tools/recipe.py), plus an inspector that rewrites [ui]
+
+const uiEd = { tab: "recipe", model: null, selected: null, width: null, timer: null, seq: 0, hits: [] };
+
+const PALETTE = {
+  dark:  { bg: "#17181b", panel: "#24262b", text: "#e8e6e1", muted: "#8a8d93", border: "#34373d", frame: "#24262b", track: "#2e3036", button: "#34373e" },
+  light: { bg: "#f2f1ee", panel: "#ffffff", text: "#1e1f23", muted: "#6b6e75", border: "#d6d4cf", frame: "#e4e2dd", track: "#d6d4cf", button: "#e4e2dd" },
+};
+const CONTROL_LABELS = { "knob": "Knob", "small-knob": "Small knob", "large-knob": "Large knob", "slider": "Slider",
+  "toggle": "Toggle", "button": "Button", "dropdown": "Drop-down", "buttons": "Buttons" };
+
+function showTab(tab) {
+  uiEd.tab = tab;
+  for (const b of document.querySelectorAll(".tab")) b.classList.toggle("active", b.dataset.tab === tab);
+  $("editor").classList.toggle("hidden", tab !== "recipe");
+  $("uiPane").classList.toggle("hidden", tab !== "ui");
+  if (tab === "ui") loadUiModel();
+}
+
+async function loadUiModel() {
+  const text = $("editor").value;
+  if (!text.trim()) {
+    uiEd.model = null;
+    showUiError("No recipe yet. Describe a plugin in the chat, or pick one on the left.");
+    return;
+  }
+  try {
+    const { model } = await api("/api/ui/model", { text });
+    uiEd.model = model;
+    uiEd.width = null;
+    if (uiEd.selected && !model.params.some((p) => p.symbol === uiEd.selected)) uiEd.selected = null;
+    showUiError(null);
+    renderInspector();
+    renderPreview();
+  } catch (e) {
+    uiEd.model = null;
+    showUiError("Fix the recipe first (Recipe tab):\n" + e.message);
+  }
+}
+
+function showUiError(msg) {
+  $("uiError").classList.toggle("hidden", !msg);
+  $("uiError").className = msg ? "notice" : "hidden";
+  $("uiError").textContent = msg || "";
+  $("previewBox").classList.toggle("hidden", !!msg);
+  $("inspector").classList.toggle("hidden", !!msg);
+}
+
+// ----- layout (mirrors Controls.hpp)
+
+function paramBySymbol(sym) { return uiEd.model.params.find((p) => p.symbol === sym); }
+
+function isTrivialLayout() {
+  const g = uiEd.model.groups.filter((x) => x.params.length);
+  const order = uiEd.model.params.map((p) => p.symbol);
+  return g.length === 1 && !g[0].title && !g[0].columns && g[0].params.join() === order.join();
+}
+
+function defaultColumns() {
+  const m = uiEd.model, n = Math.max(1, m.params.length);
+  let cols = Math.min(m.ui.columns, n);
+  if (isTrivialLayout() && (n === 5 || n === 6) && m.ui.columns >= 4) cols = 3;
+  return cols;
+}
+
+function cellSize(p) {
+  if (p.control === "buttons") {
+    const longest = Math.max(...p.choices.map((c) => [...c].length));
+    return [Math.min(472, Math.max(118, 16 + p.choices.length * (longest * 7 + 16))), 84];
+  }
+  return uiEd.model.geometry.cells[p.control];
+}
+
+function naturalWidth() {
+  const G = uiEd.model.geometry;
+  let widest = 0;
+  for (const g of uiEd.model.groups) {
+    const cols = g.columns || defaultColumns();
+    for (let k = 0; k < g.params.length; k += cols)
+      widest = Math.max(widest, g.params.slice(k, k + cols).reduce((a, s) => a + cellSize(paramBySymbol(s))[0], 0));
+  }
+  return Math.max(G.min_width, widest + 2 * G.pad);
+}
+
+function layout(W) {
+  const m = uiEd.model, G = m.geometry;
+  const items = [], titles = [];
+  let y = G.header + (m.ui.subtitle ? G.subtitle : 0) + 8;
+  const avail = W - 2 * G.pad;
+  for (const g of m.groups) {
+    if (!g.params.length) continue;
+    if (g.title) { titles.push({ title: g.title, y }); y += G.title; }
+    const cols = g.columns || defaultColumns();
+    const rows = [];
+    let row = [], rowW = 0;
+    for (const sym of g.params) {
+      const w = cellSize(paramBySymbol(sym))[0];
+      if (row.length && (row.length >= cols || rowW + w > avail)) { rows.push([row, rowW]); row = []; rowW = 0; }
+      row.push(sym);
+      rowW += w;
+    }
+    if (row.length) rows.push([row, rowW]);
+    const blockW = Math.max(...rows.map((r) => r[1]));
+    const x0 = Math.max(G.pad, (W - blockW) / 2);
+    for (const [r] of rows) {
+      let x = x0, rowH = 0;
+      for (const sym of r) {
+        const [w, h] = cellSize(paramBySymbol(sym));
+        items.push({ sym, x, y, w, h });
+        x += w;
+        rowH = Math.max(rowH, h);
+      }
+      y += rowH;
+    }
+    y += G.gap;
+  }
+  return { items, titles, height: y - G.gap + G.bottom };
+}
+
+// ----- drawing (mirrors Controls.hpp)
+
+function formatValue(p, v) {
+  if (p.type === "bool") return v > 0.5 ? "On" : "Off";
+  if (p.type === "choice") return p.choices[Math.round(v)] || "?";
+  if (p.type === "int") return p.unit ? `${Math.round(v)} ${p.unit}` : `${Math.round(v)}`;
+  if (p.unit === "Hz" && Math.abs(v) >= 1000) return `${(v / 1000).toFixed(2)} kHz`;
+  if (p.unit === "ms" && Math.abs(v) >= 1000) return `${(v / 1000).toFixed(2)} s`;
+  if (p.unit === "%") return `${v.toFixed(0)}%`;
+  const range = Math.abs(p.max - p.min), mag = Math.abs(v);
+  const dec = range >= 100 || mag >= 100 ? 0 : range >= 10 || mag >= 10 ? 1 : 2;
+  return p.unit ? `${v.toFixed(dec)} ${p.unit}` : v.toFixed(dec);
+}
+
+function toNorm(p, v) {
+  if (p.max <= p.min) return 0;
+  if (p.scale === "log" && p.min > 0) return Math.log(v / p.min) / Math.log(p.max / p.min);
+  return (v - p.min) / (p.max - p.min);
+}
+
+function onAccent(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const lum = 0.2126 * (n >> 16 & 255) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255);
+  return lum > 140 ? "#17181b" : "#ffffff";
+}
+
+function renderPreview() {
+  const m = uiEd.model;
+  if (!m) return;
+  const natural = naturalWidth();
+  const slider = $("pwidth");
+  slider.min = m.geometry.min_width;
+  slider.max = Math.round(Math.max(natural * 1.6, natural + 200));
+  const W = Math.round(uiEd.width || natural);
+  slider.value = W;
+  const L = layout(W);
+  const H = Math.round(L.height);
+  $("pwidthLabel").textContent = `${W} × ${H}`;
+
+  const cv = $("preview"), dpr = window.devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.width = W + "px";
+  const c = cv.getContext("2d");
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const pal = PALETTE[m.ui.theme] || PALETTE.dark;
+  const accent = m.ui.accent;
+  const font = (px) => `${px}px "DejaVu Sans", Verdana, Geneva, sans-serif`;
+  c.textBaseline = "top";
+
+  c.fillStyle = m.ui.background || pal.bg;
+  c.fillRect(0, 0, W, H);
+
+  // header
+  const G = m.geometry;
+  c.font = font(13 * 1.45); c.fillStyle = pal.text; c.fillText(m.name, G.pad, 14);
+  c.font = font(13);
+  c.fillStyle = pal.muted;
+  c.fillText(m.brand, W - G.pad - c.measureText(m.brand).width, 20);
+  if (m.ui.subtitle) c.fillText(m.ui.subtitle, G.pad, 38);
+  const hy = G.header + (m.ui.subtitle ? G.subtitle : 0) - 8;
+  c.globalAlpha = 0.55; c.strokeStyle = accent; c.lineWidth = 1;
+  c.beginPath(); c.moveTo(G.pad, hy + 0.5); c.lineTo(W - G.pad, hy + 0.5); c.stroke(); c.globalAlpha = 1;
+
+  for (const t of L.titles) {
+    c.fillStyle = pal.muted; c.fillText(t.title, G.pad, t.y + 6);
+    const tw = c.measureText(t.title).width;
+    c.strokeStyle = pal.border; c.beginPath();
+    c.moveTo(G.pad + tw + 8, t.y + 6 + 7.5); c.lineTo(W - G.pad, t.y + 6 + 7.5); c.stroke();
+  }
+
+  const centered = (text, cx, cw, y, color) => {
+    c.fillStyle = color;
+    c.fillText(text, cx + Math.max(0, (cw - c.measureText(text).width) / 2), y);
+  };
+  const rrect = (x, y, w, h, r, fill) => { c.fillStyle = fill; c.beginPath(); c.roundRect(x, y, w, h, r); c.fill(); };
+
+  uiEd.hits = [];
+  for (const it of L.items) {
+    const p = paramBySymbol(it.sym);
+    const { x: cx, y: cy, w: cw } = it;
+    const top = cy + 24;
+    centered(p.short_name || p.name, cx, cw, cy, pal.muted);
+    let valueY = -1;
+    const v = p.default;
+    if (["knob", "small-knob", "large-knob"].includes(p.control)) {
+      const d = p.control === "small-knob" ? 40 : p.control === "large-knob" ? 88 : 58;
+      const r = d / 2, kx = cx + (cw - d) / 2 + r, ky = top + r;
+      const t = Math.min(1, Math.max(0, toNorm(p, v)));
+      const origin = p.min < 0 && p.max > 0 && p.scale !== "log" ? toNorm(p, 0) : 0;
+      const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25, av = a0 + (a1 - a0) * t, ao = a0 + (a1 - a0) * origin;
+      c.lineWidth = r * 0.14;
+      c.strokeStyle = pal.track; c.beginPath(); c.arc(kx, ky, r * 0.84, a0, a1); c.stroke();
+      if (Math.abs(av - ao) > 0.01) { c.strokeStyle = accent; c.beginPath(); c.arc(kx, ky, r * 0.84, Math.min(av, ao), Math.max(av, ao)); c.stroke(); }
+      c.fillStyle = pal.button; c.beginPath(); c.arc(kx, ky, r * 0.62, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = pal.text; c.lineWidth = Math.max(1.5, r * 0.08);
+      c.beginPath(); c.moveTo(kx + Math.cos(av) * r * 0.18, ky + Math.sin(av) * r * 0.18);
+      c.lineTo(kx + Math.cos(av) * r * 0.56, ky + Math.sin(av) * r * 0.56); c.stroke();
+      valueY = top + d + 8;
+    } else if (p.control === "slider") {
+      const w = cw - 24, h = 20, sx = cx + 12, sy = top + 2 + h / 2, th = Math.max(3, h * 0.22);
+      const t = Math.min(1, Math.max(0, toNorm(p, v)));
+      const origin = p.min < 0 && p.max > 0 && p.scale !== "log" ? toNorm(p, 0) : 0;
+      rrect(sx, sy - th / 2, w, th, th / 2, pal.track);
+      const xv = sx + w * t, xo = sx + w * origin;
+      if (Math.abs(xv - xo) > 0.5) rrect(Math.min(xv, xo), sy - th / 2, Math.abs(xv - xo), th, th / 2, accent);
+      c.fillStyle = pal.button; c.beginPath(); c.arc(xv, sy, h * 0.42, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = accent; c.lineWidth = Math.max(1, h * 0.07); c.stroke();
+      valueY = top + 30;
+    } else if (p.control === "toggle") {
+      const on = v > 0.5, tx = cx + (cw - 46) / 2, ty = top + 16;
+      rrect(tx, ty, 46, 24, 12, on ? accent : pal.track);
+      c.fillStyle = on ? "#ffffff" : pal.muted;
+      c.beginPath(); c.arc(on ? tx + 46 - 12 : tx + 12, ty + 12, 9, 0, Math.PI * 2); c.fill();
+      valueY = top + 58 + 8;
+    } else if (p.control === "button") {
+      const on = v > 0.5, bx = cx + (cw - 84) / 2, by = top + 14;
+      rrect(bx, by, 84, 30, 5, on ? accent : pal.button);
+      const label = on ? "On" : "Off";
+      c.fillStyle = on ? onAccent(accent) : pal.text;
+      c.fillText(label, bx + (84 - c.measureText(label).width) / 2, by + 8);
+    } else if (p.control === "dropdown") {
+      const w = cw - 14, h = 19, dx = cx + 7, dy = top + 16;
+      rrect(dx, dy, w, h, 4, pal.frame);
+      c.fillStyle = pal.button; c.beginPath(); c.roundRect(dx + w - h, dy, h, h, [0, 4, 4, 0]); c.fill();
+      c.fillStyle = pal.text; c.beginPath();
+      c.moveTo(dx + w - h + 5, dy + 7); c.lineTo(dx + w - 5, dy + 7); c.lineTo(dx + w - h / 2, dy + 13); c.fill();
+      c.save(); c.beginPath(); c.rect(dx, dy, w - h, h); c.clip();
+      c.fillStyle = pal.text; c.fillText(p.choices[Math.round(v)] || "", dx + 4, dy + 3); c.restore();
+    } else if (p.control === "buttons") {
+      const w = cw - 16, h = 28, n = p.choices.length, seg = w / n, bx = cx + 8, by = top + 4, cur = Math.round(v);
+      p.choices.forEach((label, k) => {
+        const radii = n === 1 ? 5 : k === 0 ? [5, 0, 0, 5] : k === n - 1 ? [0, 5, 5, 0] : 0;
+        c.fillStyle = k === cur ? accent : pal.button;
+        c.beginPath(); c.roundRect(bx + k * seg, by, seg - (k < n - 1 ? 1 : 0), h, radii); c.fill();
+        c.save(); c.beginPath(); c.rect(bx + k * seg, by, seg, h); c.clip();
+        c.fillStyle = k === cur ? onAccent(accent) : pal.text;
+        c.fillText(label, bx + k * seg + Math.max(4, (seg - c.measureText(label).width) / 2), by + 7);
+        c.restore();
+      });
+    }
+    if (valueY >= 0) centered(formatValue(p, v), cx, cw, valueY, pal.text);
+
+    if (uiEd.selected === p.symbol) {
+      c.save(); c.setLineDash([4, 3]); c.strokeStyle = accent; c.lineWidth = 1.5;
+      c.beginPath(); c.roundRect(cx + 2, cy - 4, cw - 4, it.h - 2, 6); c.stroke(); c.restore();
+    }
+    uiEd.hits.push({ sym: p.symbol, x: cx, y: cy - 4, w: cw, h: it.h });
+  }
+}
+
+// ----- inspector
+
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null && v !== false) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids) if (k !== null && k !== undefined) e.append(k);
+  return e;
+}
+
+function field(label, ...controls) {
+  return el("label", { class: "field" }, el("span", {}, label), el("div", { class: "row" }, ...controls));
+}
+
+function columnsSelect(value, auto, onchange) {
+  const s = el("select", { onchange: (e) => onchange(parseInt(e.target.value, 10)) });
+  if (auto) s.append(el("option", { value: 0 }, "Auto"));
+  for (let n = 1; n <= 8; n++) s.append(el("option", { value: n }, auto ? `${n} per row` : String(n)));
+  s.value = value;
+  return s;
+}
+
+function renderInspector() {
+  const m = uiEd.model, box = $("inspector");
+  box.textContent = "";
+  if (!m) return;
+  const changed = (rerender = true) => { if (rerender) renderInspector(); renderPreview(); scheduleApply(); };
+
+  box.append(el("h3", {}, "Look"));
+  box.append(field("Accent", el("input", { type: "color", value: m.ui.accent.toLowerCase(),
+    oninput: (e) => { m.ui.accent = e.target.value.toUpperCase(); changed(false); } })));
+  const theme = el("select", { onchange: (e) => { m.ui.theme = e.target.value; changed(); } },
+    el("option", { value: "dark" }, "Dark"), el("option", { value: "light" }, "Light"));
+  theme.value = m.ui.theme;
+  box.append(field("Theme", theme));
+  const custom = el("input", { type: "checkbox", checked: !!m.ui.background,
+    onchange: (e) => { m.ui.background = e.target.checked ? (PALETTE[m.ui.theme] || PALETTE.dark).bg.toUpperCase() : null; changed(); } });
+  const bg = el("input", { type: "color", value: (m.ui.background || (PALETTE[m.ui.theme] || PALETTE.dark).bg).toLowerCase(),
+    disabled: !m.ui.background, oninput: (e) => { m.ui.background = e.target.value.toUpperCase(); changed(false); } });
+  box.append(field("Background", custom, bg));
+  box.append(field("Subtitle", el("input", { type: "text", value: m.ui.subtitle, maxlength: 60, placeholder: "Optional",
+    oninput: (e) => { m.ui.subtitle = e.target.value; changed(false); } })));
+  box.append(field("Per row", columnsSelect(m.ui.columns, false, (n) => { m.ui.columns = n; changed(); })));
+
+  box.append(el("h3", {}, "Layout"));
+  box.append(el("p", { class: "hint" }, "Drag controls to reorder them or move them between groups. Click a control to change how it is drawn."));
+  m.groups.forEach((g, gi) => {
+    const chips = el("div", { class: "chips" });
+    const card = el("div", { class: "gcard" },
+      el("div", { class: "ghead" },
+        el("input", { type: "text", value: g.title, placeholder: "No title", maxlength: 40,
+          oninput: (e) => { g.title = e.target.value; changed(false); } }),
+        columnsSelect(g.columns, true, (n) => { g.columns = n; changed(); }),
+        m.groups.length > 1 ? el("button", { title: "Remove group (its controls move to the previous one)",
+          onclick: () => removeGroup(gi) }, "×") : null),
+      chips);
+    for (const sym of g.params) {
+      const p = paramBySymbol(sym);
+      const chip = el("span", { class: "pchip" + (uiEd.selected === sym ? " sel" : ""), draggable: "true",
+        onclick: () => { uiEd.selected = sym; renderInspector(); renderPreview(); },
+        ondragstart: (e) => { e.dataTransfer.setData("text/plain", sym); e.dataTransfer.effectAllowed = "move"; chip.classList.add("dragging"); },
+        ondragend: () => chip.classList.remove("dragging"),
+        ondragover: (e) => { e.preventDefault(); e.stopPropagation(); chip.classList.add("before"); },
+        ondragleave: () => chip.classList.remove("before"),
+        ondrop: (e) => { e.preventDefault(); e.stopPropagation(); chip.classList.remove("before");
+          moveParam(e.dataTransfer.getData("text/plain"), gi, sym); } },
+        p.short_name || p.name, el("small", {}, CONTROL_LABELS[p.control]));
+      chips.append(chip);
+    }
+    card.addEventListener("dragover", (e) => { e.preventDefault(); card.classList.add("over"); });
+    card.addEventListener("dragleave", (e) => { if (!card.contains(e.relatedTarget)) card.classList.remove("over"); });
+    card.addEventListener("drop", (e) => { e.preventDefault(); card.classList.remove("over"); moveParam(e.dataTransfer.getData("text/plain"), gi, null); });
+    box.append(card);
+  });
+  box.append(el("button", { onclick: () => { m.groups.push({ title: "New group", columns: 0, params: [] }); changed(); } }, "+ Add group"));
+
+  const sel = uiEd.selected && paramBySymbol(uiEd.selected);
+  if (sel) {
+    box.append(el("h3", {}, `Control · ${sel.short_name || sel.name}`));
+    const s = el("select", { onchange: (e) => { sel.control = e.target.value; changed(); } });
+    for (const opt of m.controls[sel.type]) s.append(el("option", { value: opt }, CONTROL_LABELS[opt]));
+    s.value = sel.control;
+    box.append(field("Draw as", s));
+  }
+}
+
+function moveParam(sym, gi, beforeSym) {
+  if (!sym || sym === beforeSym) return;
+  const groups = uiEd.model.groups;
+  for (const g of groups) g.params = g.params.filter((s) => s !== sym);
+  const target = groups[gi].params;
+  const at = beforeSym ? target.indexOf(beforeSym) : -1;
+  if (at >= 0) target.splice(at, 0, sym); else target.push(sym);
+  uiEd.selected = sym;
+  renderInspector(); renderPreview(); scheduleApply();
+}
+
+function removeGroup(gi) {
+  const groups = uiEd.model.groups;
+  const into = groups[gi > 0 ? gi - 1 : 1];
+  into.params.push(...groups[gi].params);
+  groups.splice(gi, 1);
+  renderInspector(); renderPreview(); scheduleApply();
+}
+
+// Writes the layout into the recipe text (debounced); the recipe stays unsaved until Save/Test/Build.
+function scheduleApply() {
+  clearTimeout(uiEd.timer);
+  uiEd.timer = setTimeout(async () => {
+    const m = uiEd.model;
+    const seq = ++uiEd.seq;
+    const payload = {
+      ui: m.ui,
+      groups: m.groups.filter((g) => g.params.length),
+      params: m.params,
+      controls: Object.fromEntries(m.params.map((p) => [p.symbol, p.control])),
+    };
+    try {
+      const r = await api("/api/ui/apply", { text: $("editor").value, ui: payload });
+      if (seq !== uiEd.seq) return;
+      $("editor").value = r.text;
+      updatePos();
+      renderButtons();
+      showUiError(null);
+    } catch (e) {
+      showUiError("Could not update the recipe: " + e.message);
+    }
+  }, 250);
+}
+
+$("preview").addEventListener("click", (e) => {
+  const r = $("preview").getBoundingClientRect();
+  const scale = (uiEd.width || naturalWidth()) / r.width;
+  const x = (e.clientX - r.left) * scale, y = (e.clientY - r.top) * scale;
+  const hit = uiEd.hits.find((h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h);
+  uiEd.selected = hit ? hit.sym : null;
+  renderInspector(); renderPreview();
+});
+$("pwidth").addEventListener("input", (e) => { uiEd.width = parseInt(e.target.value, 10); renderPreview(); });
+for (const b of document.querySelectorAll(".tab")) b.onclick = () => showTab(b.dataset.tab);
 
 // ---------------------------------------------------------------------------------------------------------------
 // wiring

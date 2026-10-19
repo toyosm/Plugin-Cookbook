@@ -1,8 +1,8 @@
 # Plugin Studio for Windows — started by "Plugin Studio.cmd".
 #
 # First run: copies the framework to Documents\Plugin Cookbook, offers to download the C++ compiler
-# (WinLibs MinGW-w64, about 275 MB, into C:\ProgramData\PluginCookbook; see compiler.ps1) and Claude Code, then starts the Studio. Your
-# plugins\ and build\ folders are never touched by updates.
+# (WinLibs MinGW-w64, about 275 MB, into C:\ProgramData\PluginCookbook; see compiler.ps1) and Claude
+# Code, then starts the Studio. Your plugins\ and build\ folders are never touched by updates.
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms

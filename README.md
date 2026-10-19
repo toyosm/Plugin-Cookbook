@@ -22,7 +22,7 @@ the same for MOD hardware. Built on [DPF](https://github.com/DISTRHO/DPF) and
 
 Download `Plugin-Studio-macOS.zip` or `Plugin-Studio-Windows.zip` from the
 [latest release](../../releases/latest) and double-click. The first time it offers to install the C++
-compiler (Apple's Command Line Tools, or Microsoft's C++ Build Tools) and Claude Code for the AI chat, then
+compiler (Apple's Command Line Tools, or a 275 MB MinGW-w64 on Windows) and Claude Code for the AI chat, then
 opens Plugin Studio in the browser. It carries its own Python and CMake. Your plugins live in
 `~/Plugin Cookbook` (macOS) or `Documents\Plugin Cookbook` (Windows).
 

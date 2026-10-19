@@ -21,7 +21,7 @@ enum class Control
 };
 
 // How a knob looks (knob controls only).
-enum class KnobStyle { Modern, Vintage, Flat, Minimal, Metal };
+enum class KnobStyle { Modern, Vintage, Flat, Minimal, Metal, Fluted };
 
 struct ParamInfo
 {
@@ -47,6 +47,8 @@ struct UiParam
     bool label, value;  // show the name above / the value below
     int32_t image;      // knob image: index into recipe::kAssets, -1 = drawn
     uint32_t frames;    // 1 = the image rotates; N = vertical (or horizontal) filmstrip of N frames
+    int32_t labelColor; // 0xRRGGBB for the name, -1 = the theme's
+    int32_t valueColor; // 0xRRGGBB for the value text, -1 = the theme's
 };
 
 // An image embedded in the plugin (PNG bytes).

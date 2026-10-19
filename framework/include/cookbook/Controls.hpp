@@ -169,6 +169,7 @@ inline ImVec4 darken(const ImVec4& c, float t) { return mix(c, ImVec4(0, 0, 0, c
 //   Flat     a thick arc with a dot at the value, no body
 //   Minimal  an outlined body, thin arcs and an accent pointer
 //   Metal    brushed-metal body with a knurled edge and a thin value ring
+//   Fluted   black seven-lobed bakelite knob with a glossy rim and a pale green pointer line
 inline bool knob(const char* id, float* t, float size, float origin, const ImVec4& accent,
                  KnobStyle style = KnobStyle::Modern, int64_t bodyColor = -1, bool ticks = false)
 {
@@ -293,6 +294,42 @@ inline bool knob(const char* id, float* t, float size, float origin, const ImVec
         dl->AddLine(at(r * 0.16f, aVal), at(r * 0.64f, aVal), ImGui::GetColorU32(rgb(0x1e1f23)), std::max(1.5f, r * 0.07f));
         break;
     }
+    case KnobStyle::Fluted: {
+        if (ticks)
+            drawTicks(r * 0.95f, r * 1.0f);
+        const ImVec4 body = lighten(bodyColor >= 0 ? rgb((uint32_t)bodyColor) : rgb(0x141414), hot);
+        // the lobed outline turns with the knob (a lobe under the pointer); the light stays put
+        constexpr int kLobes = 7, kPoints = kLobes * 12;
+        auto lobed = [&](float scale) {
+            for (int k = 0; k < kPoints; ++k)
+            {
+                const float a = aVal + 6.2831853f * k / kPoints;
+                const float rr = r * scale * (0.84f + 0.07f * std::cos(kLobes * (a - aVal)));
+                dl->PathLineTo(ImVec2(c.x + std::cos(a) * rr, c.y + std::sin(a) * rr));
+            }
+        };
+        // round body, then the raised lobed face with a glossy edge
+        dl->AddCircleFilled(ImVec2(c.x + r * 0.02f, c.y + r * 0.05f), r * 0.95f, ImGui::GetColorU32(ImVec4(0, 0, 0, 0.18f)), 48);
+        dl->AddCircleFilled(c, r * 0.93f, ImGui::GetColorU32(darken(body, 0.25f)), 48);
+        lobed(1.f);
+        dl->PathFillConcave(ImGui::GetColorU32(lighten(body, 0.03f)));
+        lobed(1.f);
+        dl->PathStroke(ImGui::GetColorU32(ImVec4(0.8f, 0.8f, 0.8f, 0.6f)), ImDrawFlags_Closed, std::max(1.f, r * 0.03f));
+        // domed center with a soft highlight towards the top left
+        dl->AddCircleFilled(c, r * 0.6f, ImGui::GetColorU32(lighten(body, 0.04f)), 40);
+        dl->PathArcTo(c, r * 0.52f, 3.14159265f * 1.05f, 3.14159265f * 1.55f, 20);
+        dl->PathStroke(ImGui::GetColorU32(ImVec4(1, 1, 1, 0.16f)), 0, std::max(1.f, r * 0.07f));
+        // pale green pointer line
+        const float w = std::max(1.5f, r * 0.065f);
+        const ImVec2 p0(c.x + dir.x * r * 0.1f, c.y + dir.y * r * 0.1f), p1(c.x + dir.x * r * 0.86f, c.y + dir.y * r * 0.86f);
+        dl->AddQuadFilled(ImVec2(p0.x + perp.x * w, p0.y + perp.y * w), ImVec2(p1.x + perp.x * w, p1.y + perp.y * w),
+                          ImVec2(p1.x - perp.x * w, p1.y - perp.y * w), ImVec2(p0.x - perp.x * w, p0.y - perp.y * w),
+                          ImGui::GetColorU32(rgb(0xcfe6c0)));
+        dl->AddQuad(ImVec2(p0.x + perp.x * w, p0.y + perp.y * w), ImVec2(p1.x + perp.x * w, p1.y + perp.y * w),
+                    ImVec2(p1.x - perp.x * w, p1.y - perp.y * w), ImVec2(p0.x - perp.x * w, p0.y - perp.y * w),
+                    ImGui::GetColorU32(rgb(0x8fae86)), std::max(1.f, r * 0.015f));
+        break;
+    }
     }
     return changed;
 }
@@ -343,16 +380,23 @@ inline ImU32 onAccent(uint32_t accentRgb)
     return ImGui::GetColorU32(lum > 140.f ? rgb(0x17181b) : rgb(0xffffff));
 }
 
+// A text color: 0xRRGGBB, or the theme's when -1.
+inline ImVec4 textColor(int32_t custom, const ImVec4& theme)
+{
+    return custom >= 0 ? rgb((uint32_t)custom) : theme;
+}
+
 // Plugin name on the left, brand on the right, optional subtitle under the name, accent rule underneath.
+// titleColor colors the name; labelColor the brand and subtitle (0xRRGGBB, -1 = the theme's).
 inline void drawHeader(float s, float width, const char* name, const char* brand, const char* subtitle,
-                       uint32_t accentRgb)
+                       uint32_t accentRgb, int32_t titleColor = -1, int32_t labelColor = -1)
 {
     const ImVec4 accent = rgb(accentRgb);
-    const ImVec4 muted = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
+    const ImVec4 muted = textColor(labelColor, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 
     ImGui::SetCursorPos(ImVec2(kPad * s, 14.f * s));
     ImGui::SetWindowFontScale(1.45f);
-    ImGui::TextUnformatted(name);
+    ImGui::TextColored(textColor(titleColor, ImGui::GetStyle().Colors[ImGuiCol_Text]), "%s", name);
     ImGui::SetWindowFontScale(1.f);
 
     const float bw = ImGui::CalcTextSize(brand).x;
@@ -652,11 +696,12 @@ private:
         {
             const ParamInfo& p = Meta::kParams[i];
             const UiParam& u = Meta::kUiParams[i];
+            const ImVec4 labelCol = textColor(u.labelColor, muted), valueCol = textColor(u.valueColor, bright);
             const float bx = o.x + u.x * sc, by = o.y + u.y * sc, bw = u.w * sc, bh = u.h * sc;
             if (u.label)
             {
                 ImGui::SetCursorPosY(by - 20.f * sc);
-                centeredText(p.shortName[0] ? p.shortName : p.name, bx, bw, muted);
+                centeredText(p.shortName[0] ? p.shortName : p.name, bx, bw, labelCol);
             }
             const bool hasValue = drawControl(i, bx, by, bw, bh, sc, accentRgb, host);
             if (u.value && hasValue)
@@ -664,7 +709,7 @@ private:
                 char buf[64];
                 formatValue(p, values[i], buf, sizeof(buf));
                 ImGui::SetCursorPosY(by + bh + 6.f * sc);
-                centeredText(buf, bx, bw, bright);
+                centeredText(buf, bx, bw, valueCol);
             }
         }
         ImGui::SetWindowFontScale(1.f);
@@ -673,7 +718,7 @@ private:
     void drawFlow(const float s, const float width, const float top, const uint32_t accentRgb, ControlsHost& host)
     {
         const float avail = width - 2.f * kPad * s;
-        const ImVec4 muted = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
+        const ImVec4 muted = textColor(Meta::kLabelColor, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
         float y = top;
 
         for (uint32_t g = 0; g < Meta::kNumGroups; ++g)
@@ -740,10 +785,11 @@ private:
                   const uint32_t accentRgb, ControlsHost& host)
     {
         const ParamInfo& p = Meta::kParams[i];
+        const UiParam& u = Meta::kUiParams[i];
         const ImGuiStyle& st = ImGui::GetStyle();
 
         ImGui::SetCursorPosY(cy);
-        centeredText(p.shortName[0] ? p.shortName : p.name, cx, cellW, st.Colors[ImGuiCol_TextDisabled]);
+        centeredText(p.shortName[0] ? p.shortName : p.name, cx, cellW, textColor(u.labelColor, st.Colors[ImGuiCol_TextDisabled]));
 
         const float top = cy + 24.f * s;
         float bx, by, bw, bh, valueY;
@@ -801,7 +847,7 @@ private:
             char buf[64];
             formatValue(p, values[i], buf, sizeof(buf));
             ImGui::SetCursorPosY(valueY);
-            centeredText(buf, cx, cellW, st.Colors[ImGuiCol_Text]);
+            centeredText(buf, cx, cellW, textColor(u.valueColor, st.Colors[ImGuiCol_Text]));
         }
     }
 

@@ -58,9 +58,13 @@ theme      = "dark"              # optional: "dark" (default) or "light"
 background = "#1B1D21"           # optional: window color, overrides the theme's
 subtitle   = "Tape-style drive"  # optional: small line under the plugin name (<= 60 chars)
 knob_style = "modern"            # optional: "modern" (default), "vintage" (cream, chicken-head pointer),
-                                 #   "flat" (thick arc), "minimal" (outline), "metal" (brushed, knurled)
+                                 #   "flat" (thick arc), "minimal" (outline), "metal" (brushed, knurled),
+                                 #   "fluted" (black seven-lobed bakelite with a pale green line)
 knob_color = "#E8DCC0"           # optional: knob body color, overrides the style's
 knob_ticks = true                # optional: scale marks around the knobs (vintage always has them)
+title_color = "#F2E6D0"          # optional text colors: the plugin name,
+label_color = "#A89F91"          #   control names / group titles / brand / subtitle,
+value_color = "#FFFFFF"          #   and the values (each param can override label_color/value_color)
 # Image skins (only when the user provides PNG images; they live in plugins/<id>/ next to the recipe):
 # layout           = "free"                  # "flow" (default: rows/groups) or "free" (each control at x, y)
 # background_image = "<id>/panel.png"        # free: the window takes its size; flow: drawn behind, cropped
@@ -101,6 +105,8 @@ description  = "Tooltip text."   # optional but recommended
 # size = 72                      # optional: knob diameter / slider, button or button-row width
 # label = false                  # optional: show or hide this control's name (default: [ui].labels)
 # value = false                  # optional: show or hide its value text
+# label_color = "#FFD27A"        # optional: this control's name / value text color
+# value_color = "#FFFFFF"
 # knob_image = "<id>/big.png"    # optional, knobs only: its own image (and knob_frames)
 
 [dsp]

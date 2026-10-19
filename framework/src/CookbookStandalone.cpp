@@ -587,7 +587,7 @@ protected:
             if (showSettings_)
             {
                 cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE,
-                                COOKBOOK_UI_ACCENT);
+                                COOKBOOK_UI_ACCENT, Meta::kTitleColor, Meta::kLabelColor);
                 drawSettings(s, width, top, area);
             }
             else
@@ -595,7 +595,7 @@ protected:
                 controls_.drawBackground(width, area);
                 if (!Meta::kFreeLayout)
                     cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE,
-                                    COOKBOOK_UI_ACCENT);
+                                    COOKBOOK_UI_ACCENT, Meta::kTitleColor, Meta::kLabelColor);
                 controls_.draw(s, width, top, COOKBOOK_UI_ACCENT, *this, area);
             }
             drawBar(s, width, height);

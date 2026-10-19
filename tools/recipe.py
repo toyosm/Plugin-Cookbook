@@ -118,13 +118,14 @@ CONTROLS = {
 SWITCH_CONTROLS = ("toggle", "button", "led", "footswitch", "lever", "checkbox")  # on/off look
 SELECTOR_MAX_STEPS = 12
 THEMES = ("dark", "light")
-KNOB_STYLES = ("modern", "vintage", "flat", "minimal", "metal")
+KNOB_STYLES = ("modern", "vintage", "flat", "minimal", "metal", "fluted")
 KNOB_CONTROLS = ("knob", "small-knob", "large-knob")
 LAYOUTS = ("flow", "free")
 MAX_IMAGE_BYTES = 4_000_000
 
 # Free layout: default control box sizes (width, height) in unscaled pixels; knobs are square.
-PARAM_UI_KEYS = ("control", "knob_style", "x", "y", "size", "label", "value", "knob_image", "knob_frames")
+PARAM_UI_KEYS = ("control", "knob_style", "x", "y", "size", "label", "value", "label_color", "value_color",
+                 "knob_image", "knob_frames")
 FREE_BOX = {"knob": (58, 58), "small-knob": (40, 40), "large-knob": (88, 88), "slider": (200, 20),
             "vslider": (24, 110), "number": (84, 22), "selector": (110, 110), "toggle": (46, 24),
             "button": (84, 30), "led": (22, 22), "footswitch": (56, 76), "lever": (28, 48), "checkbox": (22, 22),
@@ -180,6 +181,8 @@ class Param:
     value: bool | None = None
     knob_image: str = ""
     knob_frames: int = 0
+    label_color: int | None = None
+    value_color: int | None = None
 
 
 @dataclass
@@ -222,6 +225,9 @@ class Recipe:
     knob_frames: int
     free_size: tuple[int, int] | None  # [ui].size
     labels: bool
+    title_color: int | None
+    label_color: int | None
+    value_color: int | None
     images: dict[str, tuple[int, int]]  # every referenced image -> (width, height) in pixels
     groups: list[UiGroup]  # as written in the recipe; empty = one untitled group with every parameter
     params: list[Param]
@@ -392,7 +398,8 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
         ui = {}
     _check_keys(errors, "[ui]", ui, {"accent", "columns", "theme", "background", "subtitle", "knob_style",
                                      "knob_color", "knob_ticks", "layout", "background_image", "image_scale",
-                                     "knob_image", "knob_frames", "size", "labels", "group"})
+                                     "knob_image", "knob_frames", "size", "labels", "title_color", "label_color",
+                                     "value_color", "group"})
     accent_s = ui.get("accent", DEFAULT_ACCENT)
     if not isinstance(accent_s, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", accent_s):
         _err(errors, f"[ui].accent '{accent_s}': use a hex color like \"#E8A33D\"")
@@ -474,6 +481,18 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
             _err(errors, "[ui].size: [width, height] in pixels, each 120-2400")
         else:
             free_size = (sz[0], sz[1])
+    def color(where: str, table: dict, key: str) -> int | None:
+        if key not in table:
+            return None
+        v = table[key]
+        if not isinstance(v, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
+            _err(errors, f"{where}.{key} '{v}': use a hex color like \"#F2E6D0\"")
+            return None
+        return int(v[1:], 16)
+
+    title_color = color("[ui]", ui, "title_color")
+    label_color = color("[ui]", ui, "label_color")
+    value_color = color("[ui]", ui, "value_color")
     labels = ui.get("labels", True)
     if not isinstance(labels, bool):
         _err(errors, "[ui].labels: true or false")
@@ -505,7 +524,7 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
         _check_keys(errors, where, rp, {"symbol", "name", "short_name", "type", "min", "max", "default", "unit",
                                          "scale", "smoothing_ms", "description", "choices", "control",
                                          "knob_style", "x", "y", "size", "label", "value", "knob_image",
-                                         "knob_frames"})
+                                         "knob_frames", "label_color", "value_color"})
         sym = rp.get("symbol", "")
         where = f"[[param]] '{sym or idx + 1}'"
         if not isinstance(sym, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", sym):
@@ -648,6 +667,8 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
                     _err(errors, f"{where}.{key}: true or false")
                 else:
                     setattr(prm, key, rp[key])
+        prm.label_color = color(where, rp, "label_color")
+        prm.value_color = color(where, rp, "value_color")
         if "knob_image" in rp:
             if control not in KNOB_CONTROLS:
                 _err(errors, f"{where}: knob_image only applies to knob controls")
@@ -728,7 +749,8 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
                     accent=accent, columns=columns, columns_set="columns" in ui, theme=theme, background=background, subtitle=subtitle,
                     knob_style=knob_style, knob_color=knob_color, knob_ticks=knob_ticks, layout=layout,
                     background_image=background_image, image_scale=image_scale, knob_image=knob_image,
-                    knob_frames=knob_frames, free_size=free_size, labels=labels, images=images,
+                    knob_frames=knob_frames, free_size=free_size, labels=labels, title_color=title_color,
+                    label_color=label_color, value_color=value_color, images=images,
                     groups=groups, params=params, code=code, code_path=code_path,
                     code_line=code_line, warnings=warnings)
 
@@ -950,6 +972,10 @@ def ui_size(r: Recipe) -> tuple[int, int, int]:
 # Editor layout as data (used by Plugin Studio's interface editor)
 
 
+def _hex(v: int | None) -> str | None:
+    return f"#{v:06X}" if v is not None else None
+
+
 def ui_model(r: Recipe) -> dict:
     width, height, cols = ui_size(r)
     return {
@@ -976,6 +1002,9 @@ def ui_model(r: Recipe) -> dict:
             "knob_frames": r.knob_frames,
             "size": list(r.free_size) if r.free_size else None,
             "labels": r.labels,
+            "title_color": _hex(r.title_color),
+            "label_color": _hex(r.label_color),
+            "value_color": _hex(r.value_color),
         },
         "images": {k: list(v) for k, v in r.images.items()},
         "groups": [{"title": g.title, "columns": g.columns, "params": [r.params[i].symbol for i in g.params]}
@@ -984,7 +1013,8 @@ def ui_model(r: Recipe) -> dict:
                     "max": p.max, "default": p.default, "unit": p.unit, "scale": p.scale, "choices": p.choices,
                     "control": p.control, "knob_style": p.knob_style, "description": p.description,
                     "x": p.x, "y": p.y, "size": p.size, "label": p.label, "value": p.value,
-                    "knob_image": p.knob_image, "knob_frames": p.knob_frames}
+                    "knob_image": p.knob_image, "knob_frames": p.knob_frames,
+                    "label_color": _hex(p.label_color), "value_color": _hex(p.value_color)}
                    for p in r.params],
         "controls": CONTROLS,
         "switch_controls": SWITCH_CONTROLS,
@@ -1057,6 +1087,8 @@ def apply_ui(text: str, ui: dict) -> str:
             "size": num(prm.get("size")) if free and prm.get("size") else None,
             "label": prm.get("label"),
             "value": prm.get("value"),
+            "label_color": prm.get("label_color") or None,
+            "value_color": prm.get("value_color") or None,
             "knob_image": (prm.get("knob_image") or None) if is_knob else None,
             "knob_frames": (prm.get("knob_frames") or None) if is_knob else None,
         }
@@ -1141,6 +1173,9 @@ def apply_ui(text: str, ui: dict) -> str:
         entries.append(("size", f"[{int(u['size'][0])}, {int(u['size'][1])}]"))
     if u.get("labels") is False:
         entries.append(("labels", "false"))
+    for key in ("title_color", "label_color", "value_color"):
+        if u.get(key):
+            entries.append((key, _toml_str(u[key])))
     width = max(len(k) for k, _ in entries)
     block = ["[ui]"] + [f"{k.ljust(width)} = {v}" for k, v in entries] + [""]
 
@@ -1298,6 +1333,10 @@ def gen_meta(r: Recipe) -> str:
     knob_color = f"0x{r.knob_color:06X}" if r.knob_color is not None else "-1"
     out.append(f"    static constexpr int64_t kKnobColor = {knob_color}; // knob body color, -1 = the style's own")
     out.append(f"    static constexpr bool kKnobTicks = {'true' if r.knob_ticks else 'false'};")
+    cc = lambda v: f"0x{v:06X}" if v is not None else "-1"
+    out.append(f"    // text colors (0xRRGGBB, -1 = the theme's): plugin name, labels (names, group titles, brand), values")
+    out.append(f"    static constexpr int32_t kTitleColor = {cc(r.title_color)}, kLabelColor = {cc(r.label_color)}, "
+               f"kValueColor = {cc(r.value_color)};")
     out.append("")
     images = sorted(r.images)
     base_w, base_h = free_base_size(r) if r.layout == "free" else ui_size(r)[:2]
@@ -1309,7 +1348,7 @@ def gen_meta(r: Recipe) -> str:
     out.append("    // free layout boxes (x, y, w, h), label/value visibility, knob image index and frames")
     out.append(f"    static constexpr cookbook::UiParam kUiParams[{max(1, n)}] = {{")
     if n == 0:
-        out.append("        { 0.f, 0.f, 0.f, 0.f, false, false, -1, 1 },")
+        out.append("        { 0.f, 0.f, 0.f, 0.f, false, false, -1, 1, -1, -1 },")
     for p in r.params:
         img, frames = knob_image_of(r, p)
         w, h = free_box(r, p) if r.layout == "free" else (0.0, 0.0)
@@ -1317,7 +1356,9 @@ def gen_meta(r: Recipe) -> str:
         show_value = p.value if p.value is not None else r.labels
         out.append(f"        {{ {c_float(p.x or 0)}, {c_float(p.y or 0)}, {c_float(w)}, {c_float(h)}, "
                    f"{'true' if show_label else 'false'}, {'true' if show_value else 'false'}, "
-                   f"{images.index(img) if img else -1}, {frames} }}, // {p.symbol}")
+                   f"{images.index(img) if img else -1}, {frames}, "
+                   f"{cc(p.label_color if p.label_color is not None else r.label_color)}, "
+                   f"{cc(p.value_color if p.value_color is not None else r.value_color)} }}, // {p.symbol}")
     out.append("    };")
     out.append(f"    static constexpr cookbook::UiGroup kGroups[{len(groups)}] = {{")
     for gi, g in enumerate(groups):

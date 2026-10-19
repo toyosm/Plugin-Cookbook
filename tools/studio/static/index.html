@@ -931,6 +931,30 @@ function drawKnob(c, kx, ky, r, t, origin, style, bodyColor, ticks, pal, accent)
     c.beginPath(); c.arc(kx, ky, r * 0.66, 0, Math.PI * 2); c.stroke();
     line([kx, ky], at(r * 0.6, av), accent, Math.max(1.5, r * 0.08));
     disc(kx, ky, r * 0.08, accent);
+  } else if (style === "fluted") {
+    const body = bodyColor || "#141414", lobes = 7, n = lobes * 12;
+    const lobed = (scale) => {
+      c.beginPath();
+      for (let k = 0; k < n; k++) {
+        const a = av + Math.PI * 2 * k / n, rr = r * scale * (0.84 + 0.07 * Math.cos(lobes * (a - av)));
+        const x = kx + Math.cos(a) * rr, y = ky + Math.sin(a) * rr;
+        k ? c.lineTo(x, y) : c.moveTo(x, y);
+      }
+      c.closePath();
+    };
+    c.globalAlpha = 0.18; disc(kx + r * 0.02, ky + r * 0.05, r * 0.95, "#000000"); c.globalAlpha = 1;
+    disc(kx, ky, r * 0.93, darken(body, 0.25));
+    lobed(1); c.fillStyle = lighten(body, 0.03); c.fill();
+    c.strokeStyle = "rgba(204,204,204,0.6)"; c.lineWidth = Math.max(1, r * 0.03); c.stroke();
+    disc(kx, ky, r * 0.6, lighten(body, 0.04));
+    c.strokeStyle = "rgba(255,255,255,0.16)"; c.lineWidth = Math.max(1, r * 0.07);
+    c.beginPath(); c.arc(kx, ky, r * 0.52, Math.PI * 1.05, Math.PI * 1.55); c.stroke();
+    const w = Math.max(1.5, r * 0.065);
+    const p0 = [kx + dir[0] * r * 0.1, ky + dir[1] * r * 0.1], p1 = [kx + dir[0] * r * 0.86, ky + dir[1] * r * 0.86];
+    c.beginPath();
+    c.moveTo(p0[0] + perp[0] * w, p0[1] + perp[1] * w); c.lineTo(p1[0] + perp[0] * w, p1[1] + perp[1] * w);
+    c.lineTo(p1[0] - perp[0] * w, p1[1] - perp[1] * w); c.lineTo(p0[0] - perp[0] * w, p0[1] - perp[1] * w); c.closePath();
+    c.fillStyle = "#cfe6c0"; c.fill(); c.strokeStyle = "#8fae86"; c.lineWidth = Math.max(1, r * 0.015); c.stroke();
   } else if (style === "metal") {
     arc(r * 0.9, a0, a1, pal.track, Math.max(1, r * 0.06));
     arc(r * 0.9, ao, av, accent, Math.max(1.5, r * 0.08));
@@ -1241,14 +1265,16 @@ function renderPreview() {
   };
   c.font = font(13);
   uiEd.hits = [];
+  const labelOf = (p) => p.label_color || m.ui.label_color || pal.muted;
+  const valueOf = (p) => p.value_color || m.ui.value_color || pal.text;
 
   if (free) {
     for (const p of m.params) {
       const [w, h] = freeBox(p);
       const x = p.x || 0, y = p.y || 0;
-      if (showsLabel(p)) centered(p.short_name || p.name, x, w, y - 20, pal.muted);
+      if (showsLabel(p)) centered(p.short_name || p.name, x, w, y - 20, labelOf(p));
       const hasValue = drawControl(c, p, x, y, w, h, pal, accent);
-      if (hasValue && showsValueText(p)) centered(formatValue(p, p.default), x, w, y + h + 6, pal.text);
+      if (hasValue && showsValueText(p)) centered(formatValue(p, p.default), x, w, y + h + 6, valueOf(p));
       if (uiEd.selected === p.symbol) {
         c.save(); c.setLineDash([4, 3]); c.strokeStyle = accent; c.lineWidth = 1.5;
         c.strokeRect(x - 3, y - 3, w + 6, h + 6); c.restore();
@@ -1259,9 +1285,9 @@ function renderPreview() {
   }
 
   // header
-  c.font = font(13 * 1.45); c.fillStyle = pal.text; c.fillText(m.name, G.pad, 14);
+  c.font = font(13 * 1.45); c.fillStyle = m.ui.title_color || pal.text; c.fillText(m.name, G.pad, 14);
   c.font = font(13);
-  c.fillStyle = pal.muted;
+  c.fillStyle = m.ui.label_color || pal.muted;
   c.fillText(m.brand, W - G.pad - c.measureText(m.brand).width, 20);
   if (m.ui.subtitle) c.fillText(m.ui.subtitle, G.pad, 38);
   const hy = G.header + (m.ui.subtitle ? G.subtitle : 0) - 8;
@@ -1269,7 +1295,7 @@ function renderPreview() {
   c.beginPath(); c.moveTo(G.pad, hy + 0.5); c.lineTo(W - G.pad, hy + 0.5); c.stroke(); c.globalAlpha = 1;
 
   for (const t of L.titles) {
-    c.fillStyle = pal.muted; c.fillText(t.title, G.pad, t.y + 6);
+    c.fillStyle = m.ui.label_color || pal.muted; c.fillText(t.title, G.pad, t.y + 6);
     const tw = c.measureText(t.title).width;
     c.strokeStyle = pal.border; c.lineWidth = 1; c.beginPath();
     c.moveTo(G.pad + tw + 8, t.y + 6 + 7.5); c.lineTo(W - G.pad, t.y + 6 + 7.5); c.stroke();
@@ -1278,10 +1304,10 @@ function renderPreview() {
   for (const it of L.items) {
     const p = paramBySymbol(it.sym);
     const { x: cx, y: cy, w: cw } = it;
-    centered(p.short_name || p.name, cx, cw, cy, pal.muted);
+    centered(p.short_name || p.name, cx, cw, cy, labelOf(p));
     const box = flowBox(p, cx, cy, cw);
     drawControl(c, p, box.x, box.y, box.w, box.h, pal, accent);
-    if (box.valueY >= 0) centered(formatValue(p, p.default), cx, cw, box.valueY, pal.text);
+    if (box.valueY >= 0) centered(formatValue(p, p.default), cx, cw, box.valueY, valueOf(p));
     if (uiEd.selected === p.symbol) {
       c.save(); c.setLineDash([4, 3]); c.strokeStyle = accent; c.lineWidth = 1.5;
       c.beginPath(); c.roundRect(cx + 2, cy - 4, cw - 4, it.h - 2, 6); c.stroke(); c.restore();
@@ -1321,6 +1347,15 @@ function field(label, ...controls) {
   return el("label", { class: "field" }, el("span", {}, label), el("div", { class: "row" }, ...controls));
 }
 
+// A color that can be left to its default: a checkbox turns the custom color on, the picker sets it.
+function colorField(label, obj, key, fallback, changed) {
+  const pick = el("input", { type: "color", value: (obj[key] || fallback).toLowerCase(), disabled: !obj[key],
+    oninput: (e) => { obj[key] = e.target.value.toUpperCase(); changed(false); } });
+  const on = el("input", { type: "checkbox", checked: !!obj[key], title: "Use a custom color",
+    onchange: (e) => { obj[key] = e.target.checked ? pick.value.toUpperCase() : null; changed(); } });
+  return field(label, on, pick);
+}
+
 function columnsSelect(value, auto, onchange) {
   const s = el("select", { onchange: (e) => onchange(parseInt(e.target.value, 10)) });
   if (auto) s.append(el("option", { value: 0 }, "Auto"));
@@ -1349,13 +1384,17 @@ function renderInspector() {
   box.append(field("Background", custom, bg));
   box.append(field("Subtitle", el("input", { type: "text", value: m.ui.subtitle, maxlength: 60, placeholder: "Optional",
     oninput: (e) => { m.ui.subtitle = e.target.value; changed(false); } })));
+  const pal = PALETTE[m.ui.theme] || PALETTE.dark;
+  box.append(colorField("Title text", m.ui, "title_color", pal.text, changed));
+  box.append(colorField("Label text", m.ui, "label_color", pal.muted, changed));
+  box.append(colorField("Value text", m.ui, "value_color", pal.text, changed));
   box.append(field("Per row", columnsSelect(m.ui.columns, false, (n) => { m.ui.columns = n; m.ui.columns_set = true; changed(); })));
   const knobStyle = el("select", { onchange: (e) => { m.ui.knob_style = e.target.value; changed(); } });
   for (const k of m.knob_styles) knobStyle.append(el("option", { value: k }, k[0].toUpperCase() + k.slice(1)));
   knobStyle.value = m.ui.knob_style;
   box.append(field("Knobs", knobStyle));
   const kcustom = el("input", { type: "checkbox", checked: !!m.ui.knob_color,
-    onchange: (e) => { m.ui.knob_color = e.target.checked ? (m.ui.knob_style === "vintage" ? "#E8DCC0" : m.ui.knob_style === "metal" ? "#B4B8BF" : "#34373E") : null; changed(); } });
+    onchange: (e) => { m.ui.knob_color = e.target.checked ? ({ vintage: "#E8DCC0", metal: "#B4B8BF", fluted: "#141414" }[m.ui.knob_style] || "#34373E") : null; changed(); } });
   const kcolor = el("input", { type: "color", value: (m.ui.knob_color || "#34373e").toLowerCase(), disabled: !m.ui.knob_color,
     oninput: (e) => { m.ui.knob_color = e.target.value.toUpperCase(); changed(false); } });
   box.append(field("Knob color", kcustom, kcolor));
@@ -1498,6 +1537,9 @@ function renderInspector() {
     };
     box.append(tri("label", "Name"));
     box.append(tri("value", "Value"));
+    const palSel = PALETTE[m.ui.theme] || PALETTE.dark;
+    box.append(colorField("Name color", sel, "label_color", m.ui.label_color || palSel.muted, changed));
+    box.append(colorField("Value color", sel, "value_color", m.ui.value_color || palSel.text, changed));
     if (["knob", "small-knob", "large-knob"].includes(sel.control)) {
       box.append(field("Image", imageSelect(sel.knob_image, "Same as all knobs", (v) => { sel.knob_image = v; changed(); })));
       if (sel.knob_image) {

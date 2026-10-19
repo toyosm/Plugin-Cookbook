@@ -70,7 +70,7 @@ protected:
             fControls.drawBackground(width, height);
             if (!Meta::kFreeLayout) // a free layout's artwork carries its own title
                 cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE,
-                                COOKBOOK_UI_ACCENT);
+                                COOKBOOK_UI_ACCENT, Meta::kTitleColor, Meta::kLabelColor);
             fControls.draw(s, width, (cui::headerHeight(COOKBOOK_UI_SUBTITLE) + 8.f) * s, COOKBOOK_UI_ACCENT, *this,
                            height);
             drawStandaloneStatus(s, height);

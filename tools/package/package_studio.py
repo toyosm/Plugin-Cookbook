@@ -94,9 +94,15 @@ def portable_python(key: str, dest: Path) -> None:
     lib = next(dest.glob("lib/python3*"), None) or dest / "Lib"
     for name in ("test", "idlelib", "tkinter", "turtledemo", "ensurepip", "lib2to3", "pydoc_data"):
         shutil.rmtree(lib / name, ignore_errors=True)
+    # Tcl/Tk data folders (macOS: lib/tcl8.6, lib/tk8.6, ...; Windows: tcl/). Folders only: on Windows the
+    # standard library sits in Lib/ too, and a case-insensitive "lib/thread*" would also match threading.py.
     for pattern in ("lib/tcl*", "lib/tk*", "lib/itcl*", "lib/thread*", "tcl", "share", "include"):
         for p in dest.glob(pattern):
-            shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink()
+            if p.is_dir() and p.parent != lib:
+                shutil.rmtree(p, ignore_errors=True)
+    for module in ("threading.py", "subprocess.py", "tomllib", "json", "http/server.py", "webbrowser.py"):
+        if not (lib / module).exists():
+            sys.exit(f"pruned too much: {module} is missing from the bundled Python")
 
 
 def portable_cmake(platform_key: str, dest: Path) -> Path:

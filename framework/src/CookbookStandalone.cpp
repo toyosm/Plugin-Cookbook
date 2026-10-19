@@ -25,7 +25,6 @@
 #include <cstdlib>
 #include <fstream>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -91,6 +90,25 @@ struct Settings
     unsigned outFirst = 0;
     unsigned sampleRate = 0; // 0 = pick automatically
     unsigned bufferSize = 256;
+};
+
+// MinGW cross-compilers built with win32 threads have no standard mutex. This only guards the error
+// text, which is rare and short, so a spin lock is plenty.
+class SpinLock
+{
+public:
+    void lock() noexcept { while (flag_.test_and_set(std::memory_order_acquire)) {} }
+    void unlock() noexcept { flag_.clear(std::memory_order_release); }
+
+    struct Scoped
+    {
+        explicit Scoped(SpinLock& l) noexcept : lock(l) { lock.lock(); }
+        ~Scoped() { lock.unlock(); }
+        SpinLock& lock;
+    };
+
+private:
+    std::atomic_flag flag_ = ATOMIC_FLAG_INIT;
 };
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -421,7 +439,7 @@ private:
 
     std::string takeStreamError()
     {
-        std::lock_guard<std::mutex> lock(errorMutex_);
+        SpinLock::Scoped lock(errorLock_);
         std::string err;
         err.swap(streamError_);
         return err;
@@ -431,7 +449,7 @@ private:
     {
         if (type == RtAudioError::WARNING || type == RtAudioError::DEBUG_WARNING || !sInstance)
             return;
-        std::lock_guard<std::mutex> lock(sInstance->errorMutex_);
+        SpinLock::Scoped lock(sInstance->errorLock_);
         sInstance->streamError_ = text;
     }
 
@@ -502,7 +520,7 @@ private:
     cookbook::Engine<recipe::Kernel, Meta> engine_;
     std::vector<float> scratch_, silence_;
     unsigned streamInChannels_ = 0, streamOutChannels_ = 0, streamBuffer_ = 1;
-    std::mutex errorMutex_;
+    SpinLock errorLock_;
     std::string streamError_;
 };
 

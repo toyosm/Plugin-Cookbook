@@ -48,13 +48,15 @@ jobs:
           python-version: "3.12"
       - name: Package
         run: python tools/package/package_studio.py windows --out dist
-      # Smoke test of what people download: the bundled Python and CMake, with the MSVC compiler.
-      - uses: ilammy/msvc-dev-cmd@v1
+      # Smoke test of what people download: the bundled Python and CMake, with the same pinned MinGW the
+      # launcher downloads.
       - name: Test and build an example with the package
         shell: pwsh
         run: |
           Expand-Archive dist/Plugin-Studio-Windows.zip -DestinationPath $env:RUNNER_TEMP/app
           $top = "$env:RUNNER_TEMP/app/Plugin Studio"
+          . "$top/setup/compiler.ps1"
+          Use-MinGW (Install-MinGW)
           $cmake = Join-Path $top ((Get-Content "$top/setup/cmake-bin.txt").Trim())
           $env:Path = "$top\python;$cmake;$env:Path"
           Set-Location "$top/cookbook"

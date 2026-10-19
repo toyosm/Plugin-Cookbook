@@ -8,7 +8,7 @@
 Each package carries a portable Python (python-build-standalone), CMake (from its PyPI wheel) and a snapshot
 of this repository (tracked files only, without your own recipes). On first run the launcher copies the
 snapshot to ~/Plugin Cookbook (macOS) or Documents/Plugin Cookbook (Windows), offers to install the C++
-compiler and Claude Code if they are missing, and opens the Studio. The macOS package must be built on a
+compiler (Apple's Command Line Tools; on Windows a pinned MinGW-w64) and Claude Code if they are missing, and opens the Studio. The macOS package must be built on a
 Mac (it uses osacompile, iconutil and ditto); the Windows package can be built anywhere.
 """
 
@@ -42,6 +42,12 @@ PBS_ASSETS = {
     "windows-x64": f"cpython-{PBS_VERSION}+{PBS_RELEASE}-x86_64-pc-windows-msvc-install_only.tar.gz",
 }
 CMAKE_VERSION = "3.31.6"
+
+# Windows compiler: WinLibs GCC (MinGW-w64), the toolchain CI already builds Windows plugins with. MSVC can't
+# compile the pinned DPF widgets (they use GCC's `a ?: b`). Downloaded on first run, checked against this hash.
+MINGW_URL = ("https://github.com/brechtsanders/winlibs_mingw/releases/download/16.2.0posix-14.0.0-ucrt-r1/"
+             "winlibs-x86_64-posix-seh-gcc-16.2.0-mingw-w64ucrt-14.0.0-r1.zip")
+MINGW_SHA256 = "c1f52294597c0b73786b2a78eb5d176d89226d2f21875eab75e783a8b1cefcc4"
 CMAKE_PLATFORM = {"macos": "macosx_10_10_universal2", "windows": "win_amd64"}
 
 # Top-level folders the launcher keeps in sync with the app (your plugins/ and build/ are never touched).
@@ -254,13 +260,14 @@ def package_windows(out: Path) -> Path:
     (top / "setup").mkdir(parents=True)
     # Windows line endings for the files people and cmd.exe read
     for src, dest in (("Plugin Studio.cmd", top / "Plugin Studio.cmd"), ("launch.ps1", top / "setup" / "launch.ps1"),
-                      ("README.txt", top / "README.txt")):
+                      ("compiler.ps1", top / "setup" / "compiler.ps1"), ("README.txt", top / "README.txt")):
         text = (HERE / "windows" / src).read_text(encoding="utf-8").replace("\r\n", "\n")
         dest.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
     snapshot(top / "cookbook")
     portable_python("windows-x64", top / "python")
     cmake_bin = portable_cmake("windows", top / "cmake-wheel")
     (top / "setup" / "cmake-bin.txt").write_text(str(cmake_bin.relative_to(top)).replace("/", "\\") + "\n")
+    (top / "setup" / "mingw.txt").write_text(MINGW_URL + "\n" + MINGW_SHA256 + "\n")
 
     out.mkdir(parents=True, exist_ok=True)
     zip_path = out / "Plugin-Studio-Windows.zip"

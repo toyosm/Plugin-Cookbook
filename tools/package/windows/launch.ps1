@@ -1,11 +1,12 @@
 # Plugin Studio for Windows — started by "Plugin Studio.cmd".
 #
-# First run: copies the framework to Documents\Plugin Cookbook, offers to install the C++ compiler
-# (Visual Studio 2022 Build Tools, through winget) and Claude Code, then starts the Studio inside the
-# compiler's environment. Your plugins\ and build\ folders are never touched by updates.
+# First run: copies the framework to Documents\Plugin Cookbook, offers to download the C++ compiler
+# (WinLibs MinGW-w64, about 275 MB, see compiler.ps1) and Claude Code, then starts the Studio. Your
+# plugins\ and build\ folders are never touched by updates.
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms
+. (Join-Path $PSScriptRoot "compiler.ps1")
 
 $Top = Split-Path -Parent $PSScriptRoot
 $Work = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Plugin Cookbook"
@@ -15,14 +16,6 @@ $Port = 8765
 
 function Ask($text, $buttons = "YesNo") {
     return [System.Windows.Forms.MessageBox]::Show($text, "Plugin Studio", $buttons, "Information")
-}
-
-function Find-BuildTools {
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-    if (-not (Test-Path $vswhere)) { return $null }
-    $path = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-    if ($path) { return (Join-Path $path "Common7\Tools\VsDevCmd.bat") }
-    return $null
 }
 
 # Already running? Just show it.
@@ -43,23 +36,17 @@ Get-ChildItem (Join-Path $Top "cookbook") -File | Copy-Item -Destination $Work -
 $readme = Join-Path $Work "plugins\README.md"
 if (-not (Test-Path $readme)) { Copy-Item (Join-Path $Top "cookbook\plugins\README.md") $readme -ErrorAction SilentlyContinue }
 
-# 2. The C++ compiler: Visual Studio 2022 Build Tools (free, about 3 GB, installed once).
-$devCmd = Find-BuildTools
-if (-not $devCmd) {
-    $answer = Ask ("To test and build plugins, Plugin Studio needs Microsoft's free C++ Build Tools (about 3 GB, installed once).`n`n" +
-                   "Install them now? This takes 10-20 minutes. Choose No to open the Studio without them.")
+# 2. The C++ compiler, downloaded once. Without it the Studio still opens; Test and Build need it.
+$mingw = Get-MinGWBin
+if (-not $mingw) {
+    $answer = Ask ("To test and build plugins, Plugin Studio needs a free C++ compiler (MinGW-w64, a 275 MB download, once).`n`n" +
+                   "Download it now? Choose No to open the Studio without it.")
     if ($answer -eq "Yes") {
-        if (Get-Command winget -ErrorAction SilentlyContinue) {
-            Write-Host "Installing Visual Studio Build Tools (this takes a while)..."
-            winget install --id Microsoft.VisualStudio.2022.BuildTools --exact --accept-package-agreements --accept-source-agreements `
-                --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-            $devCmd = Find-BuildTools
-        } else {
-            Ask "Your Windows has no winget. The download page will open: install 'Build Tools for Visual Studio 2022' with 'Desktop development with C++', then start Plugin Studio again." "OK" | Out-Null
-            Start-Process "https://visualstudio.microsoft.com/visual-cpp-build-tools/"
-        }
+        try { $mingw = Install-MinGW }
+        catch { Ask ("Could not install the compiler: " + $_.Exception.Message) "OK" | Out-Null }
     }
 }
+if ($mingw) { Use-MinGW $mingw }
 
 # 3. Claude Code for the AI chat (optional; uses the person's Claude subscription).
 $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
@@ -75,19 +62,9 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue) -and -not (Test-Path
     }
 }
 
-# 4. The Studio, inside the compiler's environment when there is one (cl.exe, MSBuild on PATH).
+# 4. The Studio. It opens the page in the default browser.
 $env:Path = "$(Split-Path $Python);$CMakeBin;$env:Path"
 Set-Location $Work
 Write-Host ""
 Write-Host "Plugin Studio is running at http://127.0.0.1:$Port/ - keep this window open; close it to stop."
-if ($devCmd) {
-    # a small batch file avoids quoting trouble when PowerShell hands a command line to cmd
-    $run = Join-Path $env:TEMP "plugin-studio-run.cmd"
-    Set-Content -Path $run -Encoding ASCII -Value @(
-        "@echo off",
-        "call `"$devCmd`" -arch=x64 -host_arch=x64 -no_logo",
-        "`"$Python`" tools\recipe.py studio --port $Port")
-    & cmd.exe /c $run
-} else {
-    & $Python tools\recipe.py studio --port $Port
-}
+& $Python tools\recipe.py studio --port $Port

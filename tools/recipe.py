@@ -115,6 +115,8 @@ CONTROLS = {
     "choice": ("dropdown", "buttons"),
 }
 THEMES = ("dark", "light")
+KNOB_STYLES = ("modern", "vintage", "flat", "minimal", "metal")
+KNOB_CONTROLS = ("knob", "small-knob", "large-knob")
 
 # Editor geometry in unscaled pixels. framework/include/cookbook/Controls.hpp and the Plugin Studio preview
 # (tools/studio/static/index.html) use the same numbers and the same layout rules: keep all three in sync.
@@ -153,6 +155,7 @@ class Param:
     description: str
     choices: list[str] = field(default_factory=list)
     control: str = ""
+    knob_style: str = ""   # as written in the recipe; "" = [ui].knob_style
 
 
 @dataclass
@@ -181,9 +184,13 @@ class Recipe:
     uri: str
     accent: int
     columns: int
+    columns_set: bool  # columns written in the recipe (otherwise 5-6 plain controls become two rows of three)
     theme: str
     background: int | None
     subtitle: str
+    knob_style: str
+    knob_color: int | None
+    knob_ticks: bool
     groups: list[UiGroup]  # as written in the recipe; empty = one untitled group with every parameter
     params: list[Param]
     code: str
@@ -339,7 +346,8 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
     if not isinstance(ui, dict):
         _err(errors, "[ui] must be a table")
         ui = {}
-    _check_keys(errors, "[ui]", ui, {"accent", "columns", "theme", "background", "subtitle", "group"})
+    _check_keys(errors, "[ui]", ui, {"accent", "columns", "theme", "background", "subtitle", "knob_style",
+                                     "knob_color", "knob_ticks", "group"})
     accent_s = ui.get("accent", DEFAULT_ACCENT)
     if not isinstance(accent_s, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", accent_s):
         _err(errors, f"[ui].accent '{accent_s}': use a hex color like \"#E8A33D\"")
@@ -364,6 +372,21 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
     if not isinstance(subtitle, str) or len(subtitle) > 60:
         _err(errors, "[ui].subtitle: a string of at most 60 characters")
         subtitle = ""
+    knob_style = ui.get("knob_style", "modern")
+    if knob_style not in KNOB_STYLES:
+        _err(errors, f"[ui].knob_style: one of {', '.join(repr(k) for k in KNOB_STYLES)}")
+        knob_style = "modern"
+    knob_color = None
+    if "knob_color" in ui:
+        kc = ui["knob_color"]
+        if not isinstance(kc, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", kc):
+            _err(errors, f"[ui].knob_color '{kc}': use a hex color like \"#D9CBA8\"")
+        else:
+            knob_color = int(kc[1:], 16)
+    knob_ticks = ui.get("knob_ticks", False)
+    if not isinstance(knob_ticks, bool):
+        _err(errors, "[ui].knob_ticks: true or false")
+        knob_ticks = False
     raw_groups = ui.get("group", [])
     if not isinstance(raw_groups, list):
         _err(errors, "[ui] groups must be declared as [[ui.group]] tables")
@@ -384,7 +407,8 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
             _err(errors, f"{where}: must be a table")
             continue
         _check_keys(errors, where, rp, {"symbol", "name", "short_name", "type", "min", "max", "default", "unit",
-                                         "scale", "smoothing_ms", "description", "choices", "control"})
+                                         "scale", "smoothing_ms", "description", "choices", "control",
+                                         "knob_style"})
         sym = rp.get("symbol", "")
         where = f"[[param]] '{sym or idx + 1}'"
         if not isinstance(sym, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", sym):
@@ -494,8 +518,16 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
                          f"{', '.join(repr(c) for c in CONTROLS[ptype])}")
             control = CONTROLS[ptype][0]
 
+        pknob = rp.get("knob_style", "")
+        if pknob and pknob not in KNOB_STYLES:
+            _err(errors, f"{where}: knob_style must be one of {', '.join(repr(k) for k in KNOB_STYLES)}")
+            pknob = ""
+        elif pknob and control not in KNOB_CONTROLS:
+            _err(errors, f"{where}: knob_style only applies to knob controls")
+            pknob = ""
+
         params.append(Param(sym, pname, short, ptype, pmin, pmax, pdef, unit, scale, smoothing, desc, choices,
-                            control))
+                            control, pknob))
 
     # [[ui.group]] (needs the parameter symbols)
     groups: list[UiGroup] = []
@@ -561,7 +593,8 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
     recipe = Recipe(path=path, id=pid, name=name, brand=brand, brand_id=brand_id, unique_id=unique_id,
                     version=version, description=description, license=license_, homepage=homepage,
                     category=category, inputs=io["inputs"], outputs=io["outputs"], clap_id=clap_id, uri=uri,
-                    accent=accent, columns=columns, theme=theme, background=background, subtitle=subtitle,
+                    accent=accent, columns=columns, columns_set="columns" in ui, theme=theme, background=background, subtitle=subtitle,
+                    knob_style=knob_style, knob_color=knob_color, knob_ticks=knob_ticks,
                     groups=groups, params=params, code=code, code_path=code_path,
                     code_line=code_line, warnings=warnings)
 
@@ -669,7 +702,7 @@ def default_columns(r: Recipe) -> int:
     """Columns for groups that don't set their own. Five or six plain knobs read better as two rows of three."""
     n = max(1, len(r.params))
     cols = min(r.columns, n)
-    if not r.groups and n in (5, 6) and r.columns >= 4:
+    if not r.groups and not r.columns_set and n in (5, 6) and r.columns >= 4:
         cols = 3
     return cols
 
@@ -743,16 +776,22 @@ def ui_model(r: Recipe) -> dict:
         "ui": {
             "accent": f"#{r.accent:06X}",
             "columns": r.columns,
+            "columns_set": r.columns_set,
             "theme": r.theme,
             "background": f"#{r.background:06X}" if r.background is not None else None,
             "subtitle": r.subtitle,
+            "knob_style": r.knob_style,
+            "knob_color": f"#{r.knob_color:06X}" if r.knob_color is not None else None,
+            "knob_ticks": r.knob_ticks,
         },
         "groups": [{"title": g.title, "columns": g.columns, "params": [r.params[i].symbol for i in g.params]}
                    for g in effective_groups(r) if g.params],
         "params": [{"symbol": p.symbol, "name": p.name, "short_name": p.short_name, "type": p.type, "min": p.min,
                     "max": p.max, "default": p.default, "unit": p.unit, "scale": p.scale, "choices": p.choices,
-                    "control": p.control, "description": p.description} for p in r.params],
+                    "control": p.control, "knob_style": p.knob_style, "description": p.description}
+                   for p in r.params],
         "controls": CONTROLS,
+        "knob_styles": KNOB_STYLES,
         "geometry": {"pad": UI_PAD, "header": UI_HEADER_H, "subtitle": UI_SUBTITLE_H, "title": UI_TITLE_H,
                      "gap": UI_GROUP_GAP, "bottom": UI_BOTTOM, "min_width": UI_MIN_WIDTH, "cells": UI_CELL},
     }
@@ -803,20 +842,20 @@ def apply_ui(text: str, ui: dict) -> str:
                 keep[k] = False
     lines = [l for l, k in zip(lines, keep) if k]
 
-    # 2. per-parameter control
+    # 2. per-parameter keys: control and knob_style
     controls = ui.get("controls", {})
+    knob_styles = ui.get("knob_styles", {})
     tables = _toml_tables(lines)
-    edits: list[tuple[int, int, str | None]] = []  # (insert-at or replace index, mode, text)
+    edits: list[tuple[int, int, str | None]] = []  # (line, 0 = replace/delete or 1 = insert, text)
     for n, (start, name) in enumerate(tables):
         if name != "[[param":
             continue
         end = tables[n + 1][0] if n + 1 < len(tables) else len(lines)
-        body = range(start + 1, end)
         sym = ptype = None
         key_width = 0
-        control_line = None
+        found: dict[str, int] = {}
         last_key = start
-        for k in body:
+        for k in range(start + 1, end):
             m = re.match(r'^(\s*)([A-Za-z_]+)(\s*)=\s*(.*)$', lines[k])
             if not m:
                 continue
@@ -827,19 +866,24 @@ def apply_ui(text: str, ui: dict) -> str:
                 key_width = len(m.group(2)) + len(m.group(3))
             elif key == "type":
                 ptype = (re.match(r'"([^"]*)"', value) or [None, None])[1]
-            elif key == "control":
-                control_line = k
+            elif key in ("control", "knob_style"):
+                found[key] = k
         ptype = ptype or "float"
-        wanted = controls.get(sym)
-        default = CONTROLS.get(ptype, ("",))[0]
-        new = None
-        if wanted and wanted != default:
-            new = f'{"control".ljust(max(key_width, 8))}= {_toml_str(wanted)}'
-        if control_line is not None:
-            edits.append((control_line, 0, new))   # replace or delete
-        elif new:
-            edits.append((last_key + 1, 1, new))   # insert after the last key
-    for idx, mode, new in sorted(edits, key=lambda e: e[0], reverse=True):
+        control = controls.get(sym) or CONTROLS.get(ptype, ("",))[0]
+        wanted = {
+            "control": control if control != CONTROLS.get(ptype, ("",))[0] else None,
+            "knob_style": knob_styles.get(sym) if control in KNOB_CONTROLS else None,
+        }
+        inserts = []
+        for key in ("control", "knob_style"):
+            new = f'{key.ljust(max(key_width, len(key) + 1))}= {_toml_str(wanted[key])}' if wanted[key] else None
+            if key in found:
+                edits.append((found[key], 0, new))
+            elif new:
+                inserts.append(new)
+        for i, new in enumerate(inserts):
+            edits.append((last_key + 1, 1 + i, new))
+    for idx, mode, new in sorted(edits, key=lambda e: (e[0], -e[1]), reverse=True):
         if mode == 0:
             if new is None:
                 del lines[idx]
@@ -851,14 +895,20 @@ def apply_ui(text: str, ui: dict) -> str:
     # 3. the new [ui] block, before the first parameter
     u = ui.get("ui", {})
     entries = [("accent", _toml_str(u.get("accent", DEFAULT_ACCENT)))]
-    if int(u.get("columns", 4)) != 4:
-        entries.append(("columns", str(int(u["columns"]))))
+    if u.get("columns_set") or int(u.get("columns", 4)) != 4:
+        entries.append(("columns", str(int(u.get("columns", 4)))))
     if u.get("theme", "dark") != "dark":
         entries.append(("theme", _toml_str(u["theme"])))
     if u.get("background"):
         entries.append(("background", _toml_str(u["background"])))
     if u.get("subtitle"):
         entries.append(("subtitle", _toml_str(u["subtitle"])))
+    if u.get("knob_style", "modern") != "modern":
+        entries.append(("knob_style", _toml_str(u["knob_style"])))
+    if u.get("knob_color"):
+        entries.append(("knob_color", _toml_str(u["knob_color"])))
+    if u.get("knob_ticks"):
+        entries.append(("knob_ticks", "true"))
     width = max(len(k) for k, _ in entries)
     block = ["[ui]"] + [f"{k.ljust(width)} = {v}" for k, v in entries] + [""]
 
@@ -996,22 +1046,26 @@ def gen_meta(r: Recipe) -> str:
     out.append(f"    static constexpr cookbook::ParamInfo kParams[{max(1, n)}] = {{")
     if n == 0:
         out.append('        { "none", "none", "", "", "", cookbook::ParamType::Float, cookbook::Scale::Linear, '
-                   "0.f, 1.f, 0.f, 0.f, nullptr, 0, cookbook::Control::Knob },")
+                   "0.f, 1.f, 0.f, 0.f, nullptr, 0, cookbook::Control::Knob, cookbook::KnobStyle::Modern },")
     for p in r.params:
         ptype = {"float": "Float", "int": "Int", "bool": "Bool", "choice": "Choice"}[p.type]
         scale = "Log" if p.scale == "log" else "Linear"
         choices = f"kChoices_{p.symbol}, {len(p.choices)}" if p.type == "choice" else "nullptr, 0"
         control = "".join(w.capitalize() for w in p.control.split("-"))
+        knob = (p.knob_style or r.knob_style).capitalize()
         out.append(f"        {{ {c_str(p.symbol)}, {c_str(p.name)}, {c_str(p.short_name)}, {c_str(p.unit)}, "
                    f"{c_str(p.description)}, cookbook::ParamType::{ptype}, cookbook::Scale::{scale}, "
                    f"{c_float(p.min)}, {c_float(p.max)}, {c_float(p.default)}, {c_float(p.smoothing_ms)}, {choices}, "
-                   f"cookbook::Control::{control} }},")
+                   f"cookbook::Control::{control}, cookbook::KnobStyle::{knob} }},")
     out.append("    };")
     out.append("")
     groups = [g for g in effective_groups(r) if g.params] or [UiGroup("", 0, [0])]
     for gi, g in enumerate(groups):
         out.append(f"    static constexpr uint32_t kGroup{gi}[{len(g.params)}] = {{ {', '.join(map(str, g.params))} }};")
     out.append(f"    static constexpr uint32_t kNumGroups = {len(groups) if n else 0};")
+    knob_color = f"0x{r.knob_color:06X}" if r.knob_color is not None else "-1"
+    out.append(f"    static constexpr int64_t kKnobColor = {knob_color}; // knob body color, -1 = the style's own")
+    out.append(f"    static constexpr bool kKnobTicks = {'true' if r.knob_ticks else 'false'};")
     out.append(f"    static constexpr cookbook::UiGroup kGroups[{len(groups)}] = {{")
     for gi, g in enumerate(groups):
         out.append(f"        {{ {c_str(g.title)}, {g.columns or default_columns(r)}, kGroup{gi}, {len(g.params)} }},")

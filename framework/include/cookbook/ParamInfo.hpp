@@ -14,6 +14,9 @@ enum class Scale { Linear, Log };
 // Choice: Dropdown, Buttons.
 enum class Control { Knob, SmallKnob, LargeKnob, Slider, Toggle, Button, Dropdown, Buttons };
 
+// How a knob looks (knob controls only).
+enum class KnobStyle { Modern, Vintage, Flat, Minimal, Metal };
+
 struct ParamInfo
 {
     const char* symbol;
@@ -28,6 +31,7 @@ struct ParamInfo
     const char* const* choices; // Choice only
     uint32_t numChoices;
     Control control;
+    KnobStyle knobStyle;
 };
 
 // A section of the editor: an optional title and the parameters it shows, in order.

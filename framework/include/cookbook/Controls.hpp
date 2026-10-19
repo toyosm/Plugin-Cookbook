@@ -144,9 +144,19 @@ inline void centeredText(const char* text, float cellX, float cellW, const ImVec
     ImGui::TextColored(color, "%s", text);
 }
 
-// A knob drawn with ImDrawList: track arc, value arc (from the origin, so bipolar ranges grow from
-// their zero point), body and pointer. Operates on a normalized 0..1 value.
-inline bool knob(const char* id, float* t, float size, float origin, const ImVec4& accent)
+inline ImVec4 lighten(const ImVec4& c, float t) { return mix(c, ImVec4(1, 1, 1, c.w), t); }
+inline ImVec4 darken(const ImVec4& c, float t) { return mix(c, ImVec4(0, 0, 0, c.w), t); }
+
+// A knob drawn with ImDrawList on a normalized 0..1 value; the value arc grows from `origin`, so bipolar
+// ranges grow from their zero point. bodyColor is 0xRRGGBB or -1 for the style's own; ticks adds 11 scale
+// marks. The Plugin Studio preview draws the same shapes: keep them in sync.
+//   Modern   track and value arcs around a round body with a line pointer
+//   Vintage  cream body with a chicken-head pointer and scale marks
+//   Flat     a thick arc with a dot at the value, no body
+//   Minimal  an outlined body, thin arcs and an accent pointer
+//   Metal    brushed-metal body with a knurled edge and a thin value ring
+inline bool knob(const char* id, float* t, float size, float origin, const ImVec4& accent,
+                 KnobStyle style = KnobStyle::Modern, int64_t bodyColor = -1, bool ticks = false)
 {
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton(id, ImVec2(size, size));
@@ -171,23 +181,105 @@ inline bool knob(const char* id, float* t, float size, float origin, const ImVec
     const ImVec2 c(pos.x + r, pos.y + r);
     const float aVal = kMin + (kMax - kMin) * *t;
     const float aOrg = kMin + (kMax - kMin) * origin;
+    const ImVec2 dir(std::cos(aVal), std::sin(aVal));
+    const ImVec2 perp(-dir.y, dir.x);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImGuiStyle& st = ImGui::GetStyle();
+    const ImU32 track = ImGui::GetColorU32(st.Colors[ImGuiCol_FrameBgActive]);
+    const ImU32 acc = ImGui::GetColorU32(accent);
+    const ImU32 text = ImGui::GetColorU32(st.Colors[ImGuiCol_Text]);
+    const float hot = hovered || active ? 0.08f : 0.f;
+    auto at = [&](float radius, float angle) { return ImVec2(c.x + std::cos(angle) * radius, c.y + std::sin(angle) * radius); };
+    auto arc = [&](float radius, float a0, float a1, ImU32 col, float thickness) {
+        if (std::fabs(a1 - a0) < 0.01f)
+            return;
+        dl->PathArcTo(c, radius, std::min(a0, a1), std::max(a0, a1), 48);
+        dl->PathStroke(col, 0, thickness);
+    };
+    auto drawTicks = [&](float r0, float r1) {
+        const ImU32 col = ImGui::GetColorU32(st.Colors[ImGuiCol_TextDisabled]);
+        for (int k = 0; k <= 10; ++k)
+        {
+            const float a = kMin + (kMax - kMin) * k / 10.f;
+            dl->AddLine(at(r0, a), at(r1, a), col, std::max(1.f, r * 0.045f));
+        }
+    };
 
-    dl->PathArcTo(c, r * 0.84f, kMin, kMax, 48);
-    dl->PathStroke(ImGui::GetColorU32(st.Colors[ImGuiCol_FrameBgActive]), 0, r * 0.14f);
-    if (std::fabs(aVal - aOrg) > 0.01f)
+    switch (style)
     {
-        dl->PathArcTo(c, r * 0.84f, std::min(aOrg, aVal), std::max(aOrg, aVal), 48);
-        dl->PathStroke(ImGui::GetColorU32(accent), 0, r * 0.14f);
+    case KnobStyle::Modern: {
+        if (ticks)
+            drawTicks(r * 0.94f, r * 1.0f);
+        arc(r * 0.84f, kMin, kMax, track, r * 0.14f);
+        arc(r * 0.84f, aOrg, aVal, acc, r * 0.14f);
+        const ImVec4 body = bodyColor >= 0 ? lighten(rgb((uint32_t)bodyColor), hot)
+                                           : (hot > 0.f ? st.Colors[ImGuiCol_ButtonHovered] : st.Colors[ImGuiCol_Button]);
+        dl->AddCircleFilled(c, r * 0.62f, ImGui::GetColorU32(body), 40);
+        dl->AddLine(at(r * 0.18f, aVal), at(r * 0.56f, aVal), text, std::max(1.5f, r * 0.08f));
+        break;
     }
-
-    const ImVec4 body = hovered || active ? st.Colors[ImGuiCol_ButtonHovered] : st.Colors[ImGuiCol_Button];
-    dl->AddCircleFilled(c, r * 0.62f, ImGui::GetColorU32(body), 40);
-    const ImVec2 dir(std::cos(aVal), std::sin(aVal));
-    dl->AddLine(ImVec2(c.x + dir.x * r * 0.18f, c.y + dir.y * r * 0.18f),
-                ImVec2(c.x + dir.x * r * 0.56f, c.y + dir.y * r * 0.56f),
-                ImGui::GetColorU32(st.Colors[ImGuiCol_Text]), std::max(1.5f, r * 0.08f));
+    case KnobStyle::Vintage: {
+        drawTicks(r * 0.84f, r * 0.98f);
+        const ImVec4 body = lighten(bodyColor >= 0 ? rgb((uint32_t)bodyColor) : rgb(0xe8dcc0), hot);
+        dl->AddCircleFilled(c, r * 0.74f, ImGui::GetColorU32(darken(body, 0.55f)), 40);
+        dl->AddCircleFilled(c, r * 0.68f, ImGui::GetColorU32(body), 40);
+        // chicken-head pointer: a tapered bar through the center
+        const ImU32 head = ImGui::GetColorU32(rgb(0x2a2420));
+        const ImVec2 tip(c.x + dir.x * r * 0.78f, c.y + dir.y * r * 0.78f);
+        const ImVec2 tail(c.x - dir.x * r * 0.34f, c.y - dir.y * r * 0.34f);
+        const ImVec2 left(c.x + perp.x * r * 0.17f, c.y + perp.y * r * 0.17f);
+        const ImVec2 right(c.x - perp.x * r * 0.17f, c.y - perp.y * r * 0.17f);
+        dl->AddQuadFilled(tip, left, tail, right, head);
+        dl->AddCircleFilled(c, r * 0.17f, head, 24);
+        dl->AddLine(at(r * 0.2f, aVal), at(r * 0.7f, aVal), ImGui::GetColorU32(body), std::max(1.f, r * 0.05f));
+        break;
+    }
+    case KnobStyle::Flat: {
+        if (ticks)
+            drawTicks(r * 0.94f, r * 1.0f);
+        arc(r * 0.76f, kMin, kMax, track, r * 0.24f);
+        arc(r * 0.76f, aOrg, aVal, acc, r * 0.24f);
+        dl->AddCircleFilled(at(r * 0.76f, aVal), r * 0.15f, hot > 0.f ? ImGui::GetColorU32(lighten(accent, 0.3f)) : text, 20);
+        break;
+    }
+    case KnobStyle::Minimal: {
+        if (ticks)
+            drawTicks(r * 0.94f, r * 1.0f);
+        arc(r * 0.86f, kMin, kMax, track, std::max(1.f, r * 0.06f));
+        arc(r * 0.86f, aOrg, aVal, acc, std::max(1.5f, r * 0.08f));
+        const ImVec4 ring = bodyColor >= 0 ? rgb((uint32_t)bodyColor) : st.Colors[ImGuiCol_TextDisabled];
+        dl->AddCircle(c, r * 0.66f, ImGui::GetColorU32(lighten(ring, hot)), 40, std::max(1.f, r * 0.05f));
+        dl->AddLine(c, at(r * 0.6f, aVal), acc, std::max(1.5f, r * 0.08f));
+        dl->AddCircleFilled(c, r * 0.08f, acc, 12);
+        break;
+    }
+    case KnobStyle::Metal: {
+        if (ticks)
+            drawTicks(r * 0.94f, r * 1.0f);
+        arc(r * 0.9f, kMin, kMax, track, std::max(1.f, r * 0.06f));
+        arc(r * 0.9f, aOrg, aVal, acc, std::max(1.5f, r * 0.08f));
+        const ImVec4 base = bodyColor >= 0 ? rgb((uint32_t)bodyColor) : rgb(0xb4b8bf);
+        dl->AddCircleFilled(c, r * 0.8f, ImGui::GetColorU32(darken(base, 0.62f)), 40);
+        // knurled edge
+        const ImU32 knurl = ImGui::GetColorU32(darken(base, 0.4f));
+        for (int k = 0; k < 40; ++k)
+        {
+            const float a = 6.2831853f * k / 40.f;
+            dl->AddLine(at(r * 0.7f, a), at(r * 0.79f, a), knurl, std::max(1.f, r * 0.04f));
+        }
+        // a light from the top left: concentric discs drifting towards it
+        constexpr int kSteps = 10;
+        for (int k = 0; k <= kSteps; ++k)
+        {
+            const float f = k / (float)kSteps;
+            const float rr = r * (0.68f - 0.4f * f);
+            const ImVec2 cc(c.x - r * 0.12f * f, c.y - r * 0.12f * f);
+            dl->AddCircleFilled(cc, rr, ImGui::GetColorU32(lighten(darken(base, 0.25f - 0.25f * f), 0.45f * f + hot)), 36);
+        }
+        dl->AddLine(at(r * 0.16f, aVal), at(r * 0.64f, aVal), ImGui::GetColorU32(rgb(0x1e1f23)), std::max(1.5f, r * 0.07f));
+        break;
+    }
+    }
     return changed;
 }
 
@@ -437,7 +529,7 @@ private:
             {
                 const float d = knobDiameter(p.control) * s;
                 ImGui::SetCursorPos(ImVec2(cx + (cellW - d) * 0.5f, controlTop));
-                moved = knob("##k", &t, d, origin, accent);
+                moved = knob("##k", &t, d, origin, accent, p.knobStyle, Meta::kKnobColor, Meta::kKnobTicks);
                 valueY = controlTop + d + 8.f * s;
             }
             hovered = ImGui::IsItemHovered();

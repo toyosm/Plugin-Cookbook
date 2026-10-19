@@ -57,6 +57,10 @@ columns    = 4                   # max controls per row (1-8)
 theme      = "dark"              # optional: "dark" (default) or "light"
 background = "#1B1D21"           # optional: window color, overrides the theme's
 subtitle   = "Tape-style drive"  # optional: small line under the plugin name (<= 60 chars)
+knob_style = "modern"            # optional: "modern" (default), "vintage" (cream, chicken-head pointer),
+                                 #   "flat" (thick arc), "minimal" (outline), "metal" (brushed, knurled)
+knob_color = "#E8DCC0"           # optional: knob body color, overrides the style's
+knob_ticks = true                # optional: scale marks around the knobs (vintage always has them)
 
 [[ui.group]]                     # optional: titled sections, top to bottom
 title   = "Tone"                 # optional ("" = no title)
@@ -79,6 +83,7 @@ description  = "Tooltip text."   # optional but recommended
 # control    = "knob"            # optional, how it is drawn (first value is the default):
                                  #   float/int: "knob", "small-knob", "large-knob", "slider"
                                  #   bool: "toggle", "button";  choice: "dropdown", "buttons"
+# knob_style = "vintage"         # optional, knob controls only: overrides [ui].knob_style for this one
 
 [dsp]
 code = '''

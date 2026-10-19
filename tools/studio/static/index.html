@@ -766,7 +766,7 @@ function isTrivialLayout() {
 function defaultColumns() {
   const m = uiEd.model, n = Math.max(1, m.params.length);
   let cols = Math.min(m.ui.columns, n);
-  if (isTrivialLayout() && (n === 5 || n === 6) && m.ui.columns >= 4) cols = 3;
+  if (isTrivialLayout() && !m.ui.columns_set && (n === 5 || n === 6) && m.ui.columns >= 4) cols = 3;
   return cols;
 }
 
@@ -850,6 +850,74 @@ function onAccent(hex) {
   return lum > 140 ? "#17181b" : "#ffffff";
 }
 
+function hexMix(a, b, t) {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const ch = (s) => Math.round(((pa >> s) & 255) + (((pb >> s) & 255) - ((pa >> s) & 255)) * t);
+  return "#" + ((ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).padStart(6, "0");
+}
+const lighten = (c, t) => hexMix(c, "#ffffff", t);
+const darken = (c, t) => hexMix(c, "#000000", t);
+
+// Mirrors cookbook::ui::knob() in Controls.hpp.
+function drawKnob(c, kx, ky, r, t, origin, style, bodyColor, ticks, pal, accent) {
+  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25, av = a0 + (a1 - a0) * t, ao = a0 + (a1 - a0) * origin;
+  const at = (rad, a) => [kx + Math.cos(a) * rad, ky + Math.sin(a) * rad];
+  const line = (p0, p1, color, w) => { c.strokeStyle = color; c.lineWidth = w; c.beginPath(); c.moveTo(...p0); c.lineTo(...p1); c.stroke(); };
+  const arc = (rad, x0, x1, color, w) => {
+    if (Math.abs(x1 - x0) < 0.01) return;
+    c.strokeStyle = color; c.lineWidth = w; c.beginPath(); c.arc(kx, ky, rad, Math.min(x0, x1), Math.max(x0, x1)); c.stroke();
+  };
+  const disc = (x, y, rad, color) => { c.fillStyle = color; c.beginPath(); c.arc(x, y, rad, 0, Math.PI * 2); c.fill(); };
+  const drawTicks = (r0, r1) => { for (let k = 0; k <= 10; k++) { const a = a0 + (a1 - a0) * k / 10; line(at(r0, a), at(r1, a), pal.muted, Math.max(1, r * 0.045)); } };
+  const dir = [Math.cos(av), Math.sin(av)], perp = [-dir[1], dir[0]];
+
+  if (style === "vintage") {
+    drawTicks(r * 0.84, r * 0.98);
+    const body = bodyColor || "#e8dcc0";
+    disc(kx, ky, r * 0.74, darken(body, 0.55));
+    disc(kx, ky, r * 0.68, body);
+    const head = "#2a2420";
+    c.fillStyle = head; c.beginPath();
+    c.moveTo(kx + dir[0] * r * 0.78, ky + dir[1] * r * 0.78);
+    c.lineTo(kx + perp[0] * r * 0.17, ky + perp[1] * r * 0.17);
+    c.lineTo(kx - dir[0] * r * 0.34, ky - dir[1] * r * 0.34);
+    c.lineTo(kx - perp[0] * r * 0.17, ky - perp[1] * r * 0.17);
+    c.closePath(); c.fill();
+    disc(kx, ky, r * 0.17, head);
+    line(at(r * 0.2, av), at(r * 0.7, av), body, Math.max(1, r * 0.05));
+    return;
+  }
+  if (ticks) drawTicks(r * 0.94, r);
+  if (style === "flat") {
+    arc(r * 0.76, a0, a1, pal.track, r * 0.24);
+    arc(r * 0.76, ao, av, accent, r * 0.24);
+    disc(...at(r * 0.76, av), r * 0.15, pal.text);
+  } else if (style === "minimal") {
+    arc(r * 0.86, a0, a1, pal.track, Math.max(1, r * 0.06));
+    arc(r * 0.86, ao, av, accent, Math.max(1.5, r * 0.08));
+    c.strokeStyle = bodyColor || pal.muted; c.lineWidth = Math.max(1, r * 0.05);
+    c.beginPath(); c.arc(kx, ky, r * 0.66, 0, Math.PI * 2); c.stroke();
+    line([kx, ky], at(r * 0.6, av), accent, Math.max(1.5, r * 0.08));
+    disc(kx, ky, r * 0.08, accent);
+  } else if (style === "metal") {
+    arc(r * 0.9, a0, a1, pal.track, Math.max(1, r * 0.06));
+    arc(r * 0.9, ao, av, accent, Math.max(1.5, r * 0.08));
+    const base = bodyColor || "#b4b8bf";
+    disc(kx, ky, r * 0.8, darken(base, 0.62));
+    for (let k = 0; k < 40; k++) { const a = Math.PI * 2 * k / 40; line(at(r * 0.7, a), at(r * 0.79, a), darken(base, 0.4), Math.max(1, r * 0.04)); }
+    for (let k = 0; k <= 10; k++) {
+      const f = k / 10;
+      disc(kx - r * 0.12 * f, ky - r * 0.12 * f, r * (0.68 - 0.4 * f), lighten(darken(base, 0.25 - 0.25 * f), 0.45 * f));
+    }
+    line(at(r * 0.16, av), at(r * 0.64, av), "#1e1f23", Math.max(1.5, r * 0.07));
+  } else {
+    arc(r * 0.84, a0, a1, pal.track, r * 0.14);
+    arc(r * 0.84, ao, av, accent, r * 0.14);
+    disc(kx, ky, r * 0.62, bodyColor || pal.button);
+    line(at(r * 0.18, av), at(r * 0.56, av), pal.text, Math.max(1.5, r * 0.08));
+  }
+}
+
 function renderPreview() {
   const m = uiEd.model;
   if (!m) return;
@@ -913,14 +981,7 @@ function renderPreview() {
       const r = d / 2, kx = cx + (cw - d) / 2 + r, ky = top + r;
       const t = Math.min(1, Math.max(0, toNorm(p, v)));
       const origin = p.min < 0 && p.max > 0 && p.scale !== "log" ? toNorm(p, 0) : 0;
-      const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25, av = a0 + (a1 - a0) * t, ao = a0 + (a1 - a0) * origin;
-      c.lineWidth = r * 0.14;
-      c.strokeStyle = pal.track; c.beginPath(); c.arc(kx, ky, r * 0.84, a0, a1); c.stroke();
-      if (Math.abs(av - ao) > 0.01) { c.strokeStyle = accent; c.beginPath(); c.arc(kx, ky, r * 0.84, Math.min(av, ao), Math.max(av, ao)); c.stroke(); }
-      c.fillStyle = pal.button; c.beginPath(); c.arc(kx, ky, r * 0.62, 0, Math.PI * 2); c.fill();
-      c.strokeStyle = pal.text; c.lineWidth = Math.max(1.5, r * 0.08);
-      c.beginPath(); c.moveTo(kx + Math.cos(av) * r * 0.18, ky + Math.sin(av) * r * 0.18);
-      c.lineTo(kx + Math.cos(av) * r * 0.56, ky + Math.sin(av) * r * 0.56); c.stroke();
+      drawKnob(c, kx, ky, r, t, origin, p.knob_style || m.ui.knob_style, m.ui.knob_color, m.ui.knob_ticks, pal, accent);
       valueY = top + d + 8;
     } else if (p.control === "slider") {
       const w = cw - 24, h = 20, sx = cx + 12, sy = top + 2 + h / 2, th = Math.max(3, h * 0.22);
@@ -1019,7 +1080,18 @@ function renderInspector() {
   box.append(field("Background", custom, bg));
   box.append(field("Subtitle", el("input", { type: "text", value: m.ui.subtitle, maxlength: 60, placeholder: "Optional",
     oninput: (e) => { m.ui.subtitle = e.target.value; changed(false); } })));
-  box.append(field("Per row", columnsSelect(m.ui.columns, false, (n) => { m.ui.columns = n; changed(); })));
+  box.append(field("Per row", columnsSelect(m.ui.columns, false, (n) => { m.ui.columns = n; m.ui.columns_set = true; changed(); })));
+  const knobStyle = el("select", { onchange: (e) => { m.ui.knob_style = e.target.value; changed(); } });
+  for (const k of m.knob_styles) knobStyle.append(el("option", { value: k }, k[0].toUpperCase() + k.slice(1)));
+  knobStyle.value = m.ui.knob_style;
+  box.append(field("Knobs", knobStyle));
+  const kcustom = el("input", { type: "checkbox", checked: !!m.ui.knob_color,
+    onchange: (e) => { m.ui.knob_color = e.target.checked ? (m.ui.knob_style === "vintage" ? "#E8DCC0" : m.ui.knob_style === "metal" ? "#B4B8BF" : "#34373E") : null; changed(); } });
+  const kcolor = el("input", { type: "color", value: (m.ui.knob_color || "#34373e").toLowerCase(), disabled: !m.ui.knob_color,
+    oninput: (e) => { m.ui.knob_color = e.target.value.toUpperCase(); changed(false); } });
+  box.append(field("Knob color", kcustom, kcolor));
+  box.append(field("Scale marks", el("input", { type: "checkbox", checked: m.ui.knob_ticks,
+    onchange: (e) => { m.ui.knob_ticks = e.target.checked; changed(); } })));
 
   box.append(el("h3", {}, "Layout"));
   box.append(el("p", { class: "hint" }, "Drag controls to reorder them or move them between groups. Click a control to change how it is drawn."));
@@ -1056,10 +1128,21 @@ function renderInspector() {
   const sel = uiEd.selected && paramBySymbol(uiEd.selected);
   if (sel) {
     box.append(el("h3", {}, `Control · ${sel.short_name || sel.name}`));
-    const s = el("select", { onchange: (e) => { sel.control = e.target.value; changed(); } });
+    const s = el("select", { onchange: (e) => {
+      sel.control = e.target.value;
+      if (!["knob", "small-knob", "large-knob"].includes(sel.control)) sel.knob_style = "";
+      changed();
+    } });
     for (const opt of m.controls[sel.type]) s.append(el("option", { value: opt }, CONTROL_LABELS[opt]));
     s.value = sel.control;
     box.append(field("Draw as", s));
+    if (["knob", "small-knob", "large-knob"].includes(sel.control)) {
+      const ks = el("select", { onchange: (e) => { sel.knob_style = e.target.value; changed(); } },
+        el("option", { value: "" }, "Same as all knobs"));
+      for (const k of m.knob_styles) ks.append(el("option", { value: k }, k[0].toUpperCase() + k.slice(1)));
+      ks.value = sel.knob_style || "";
+      box.append(field("Knob style", ks));
+    }
   }
 }
 
@@ -1093,6 +1176,7 @@ function scheduleApply() {
       groups: m.groups.filter((g) => g.params.length),
       params: m.params,
       controls: Object.fromEntries(m.params.map((p) => [p.symbol, p.control])),
+      knob_styles: Object.fromEntries(m.params.map((p) => [p.symbol, p.knob_style])),
     };
     try {
       const r = await api("/api/ui/apply", { text: $("editor").value, ui: payload });

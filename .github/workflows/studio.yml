@@ -1,0 +1,77 @@
+name: studio-app
+
+# Packages Plugin Studio as a double-click app: Plugin-Studio-macOS.zip and Plugin-Studio-Windows.zip.
+# Run it by hand from the Actions tab, or push a tag: tagged runs attach both files to that GitHub Release.
+
+on:
+  push:
+    tags: ["*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # lets tagged runs attach the apps to the Release
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0 # the app's VERSION comes from git describe
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Package
+        run: python3 tools/package/package_studio.py macos --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Plugin-Studio-macOS
+          path: dist/Plugin-Studio-macOS.zip
+      - name: Attach to the Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "" || true
+          gh release upload "$GITHUB_REF_NAME" dist/Plugin-Studio-macOS.zip --clobber
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Package
+        run: python tools/package/package_studio.py windows --out dist
+      # Smoke test of what people download: the bundled Python and CMake, with the MSVC compiler.
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Test and build an example with the package
+        shell: pwsh
+        run: |
+          Expand-Archive dist/Plugin-Studio-Windows.zip -DestinationPath $env:RUNNER_TEMP/app
+          $top = "$env:RUNNER_TEMP/app/Plugin Studio"
+          $cmake = Join-Path $top ((Get-Content "$top/setup/cmake-bin.txt").Trim())
+          $env:Path = "$top\python;$cmake;$env:Path"
+          Set-Location "$top/cookbook"
+          python tools/recipe.py test examples/gain.plugin.toml
+          if ($LASTEXITCODE) { exit 1 }
+          python tools/recipe.py build examples/gain.plugin.toml
+          if ($LASTEXITCODE) { exit 1 }
+          Get-ChildItem build/bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Plugin-Studio-Windows
+          path: dist/Plugin-Studio-Windows.zip
+      - name: Attach to the Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "" || true
+          gh release upload "$GITHUB_REF_NAME" dist/Plugin-Studio-Windows.zip --clobber

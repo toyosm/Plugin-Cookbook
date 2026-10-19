@@ -17,3 +17,6 @@ lv2_ttl_generator
 __pycache__/
 *.pyc
 .DS_Store
+
+# packaged Plugin Studio apps (tools/package)
+/dist/

@@ -18,6 +18,18 @@ the same for MOD hardware. Built on [DPF](https://github.com/DISTRHO/DPF) and
 
 ## For humans
 
+### Path 0 — the Plugin Studio app (nothing to set up)
+
+Download `Plugin-Studio-macOS.zip` or `Plugin-Studio-Windows.zip` from the
+[latest release](../../releases/latest) and double-click. The first time it offers to install the C++
+compiler (Apple's Command Line Tools, or Microsoft's C++ Build Tools) and Claude Code for the AI chat, then
+opens Plugin Studio in the browser. It carries its own Python and CMake. Your plugins live in
+`~/Plugin Cookbook` (macOS) or `Documents\Plugin Cookbook` (Windows).
+
+The apps aren't code-signed: on macOS right-click → **Open** the first time; on Windows click **More
+info → Run anyway**. They are built by `.github/workflows/studio.yml` (run it from the *Actions* tab, or push
+a tag to attach them to that Release) with `tools/package/package_studio.py`.
+
 ### Path A — no tools installed (GitHub builds it)
 
 1. On GitHub, *Fork* this repository (a fork keeps the `dpf` submodules the build needs). Make sure
@@ -165,6 +177,7 @@ framework/src/
     CookbookStandalone.cpp  standalone app: Engine + RtAudio + audio settings panel
 tools/recipe.py          validate / generate / test / render / build / install / studio
 tools/studio/            Plugin Studio: local web app (chat + editor + test/build buttons)
+tools/package/           packages Plugin Studio as a double-click app for macOS and Windows
 tools/harness/           offline test harness
 dpf/, dpf-widgets/       git submodules (DISTRHO Plugin Framework and its widgets)
 .github/workflows/       CI: tests + Linux, macOS (universal) and Windows builds

@@ -1549,10 +1549,10 @@ def build_harness(r: Recipe, work: Path, sanitize: bool = False) -> Path:
         cmd = cxx + ["/nologo", "/std:c++17", "/O2", "/EHsc", f"/I{gen}", f"/I{FRAMEWORK_INCLUDE}",
                      str(HARNESS_SRC), f"/Fe:{exe}", f"/Fo:{exe.parent}\\"]
     else:
-        cmd = cxx + ["-std=c++17", "-O2", "-g", "-Wall", "-Wextra", "-Wno-unused-parameter",
+        cmd = cxx + ["-std=c++17", "-O2", "-Wall", "-Wextra", "-Wno-unused-parameter",
                      f"-I{gen}", f"-I{FRAMEWORK_INCLUDE}", str(HARNESS_SRC), "-o", str(exe)]
-        if sanitize:
-            cmd += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-DCOOKBOOK_NO_ALLOC_HOOK"]
+        if sanitize:  # debug info only here: on macOS -g also runs dsymutil, which slows every test
+            cmd += ["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-DCOOKBOOK_NO_ALLOC_HOOK"]
         if platform.system() == "Linux":
             cmd += ["-lm"]
     res = subprocess.run(cmd, capture_output=True, text=True)

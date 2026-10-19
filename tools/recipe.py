@@ -930,6 +930,11 @@ def cmd_generate(args) -> int:
     listing += [f'  "{r.path.resolve().as_posix()}"' for r in recipes]
     listing += [f'  "{r.code_path.resolve().as_posix()}"' for r in recipes if r.code_path != r.path]
     listing += [")"]
+    for r in recipes:
+        cm = lambda v: '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        listing += [f"set(COOKBOOK_NAME_{r.id} {cm(r.name)})",
+                    f"set(COOKBOOK_BUNDLE_ID_{r.id} {cm(r.clap_id)})",
+                    f"set(COOKBOOK_VERSION_{r.id} \"{'.'.join(map(str, r.version))}\")"]
     write_if_changed(out / "plugins.cmake", "\n".join(listing) + "\n")
     for r in recipes:
         for w in r.warnings:

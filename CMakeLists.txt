@@ -82,6 +82,21 @@ foreach(_id IN LISTS COOKBOOK_PLUGIN_IDS)
       FILES_DSP "${_framework}/src/CookbookPlugin.cpp")
   endif()
 
+  # macOS: package the standalone as a proper .app (DPF's CMake builds a bare executable), with a
+  # microphone usage description so macOS lets it open the audio input, and an ad-hoc signature.
+  if(APPLE AND TARGET ${_id}-jack)
+    set_target_properties(${_id}-jack PROPERTIES
+      MACOSX_BUNDLE TRUE
+      MACOSX_BUNDLE_INFO_PLIST "${_framework}/cmake/StandaloneInfo.plist.in"
+      MACOSX_BUNDLE_BUNDLE_NAME "${COOKBOOK_NAME_${_id}}"
+      MACOSX_BUNDLE_GUI_IDENTIFIER "${COOKBOOK_BUNDLE_ID_${_id}}.standalone"
+      MACOSX_BUNDLE_BUNDLE_VERSION "${COOKBOOK_VERSION_${_id}}"
+      MACOSX_BUNDLE_SHORT_VERSION_STRING "${COOKBOOK_VERSION_${_id}}")
+    add_custom_command(TARGET ${_id}-jack POST_BUILD
+      COMMAND codesign --force --deep --sign - "$<TARGET_BUNDLE_DIR:${_id}-jack>"
+      VERBATIM)
+  endif()
+
   target_include_directories(${_id} PUBLIC
     "${COOKBOOK_GEN_DIR}/${_id}"
     "${_framework}/include"

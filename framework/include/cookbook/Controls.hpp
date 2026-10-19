@@ -70,6 +70,12 @@ inline ImVec2 cellSize(const ParamInfo& p)
     case Control::SmallKnob: return ImVec2(92.f, 110.f);
     case Control::LargeKnob: return ImVec2(150.f, 168.f);
     case Control::Slider: return ImVec2(236.f, 84.f);
+    case Control::Vslider: return ImVec2(70.f, 170.f);
+    case Control::Number: return ImVec2(118.f, 84.f);
+    case Control::Selector: return ImVec2(150.f, 160.f);
+    case Control::Led: return ImVec2(118.f, 84.f);
+    case Control::Checkbox: return ImVec2(118.f, 84.f);
+    case Control::Radio: return ImVec2(118.f, 24.f + 22.f * p.numChoices + 12.f);
     case Control::Buttons: {
         uint32_t longest = 0;
         for (uint32_t c = 0; c < p.numChoices; ++c)
@@ -409,6 +415,33 @@ struct ControlsHost
     virtual void endEdit(uint32_t index) = 0;
 };
 
+// Number of positions of a stepped parameter (choice, or int min..max).
+inline uint32_t stepCount(const ParamInfo& p)
+{
+    return p.type == ParamType::Choice ? p.numChoices : (uint32_t)std::lround(p.max - p.min) + 1;
+}
+
+// Selector position k (of n): angle in radians from straight up, clockwise, up to 90 degrees apart and
+// spread over at most 270 degrees.
+inline float selectorAngle(uint32_t k, uint32_t n)
+{
+    const float span = std::min(270.f, (n - 1) * 90.f) * 0.0174532925f;
+    return n > 1 ? -span * 0.5f + span * k / (float)(n - 1) : 0.f;
+}
+
+// Parses a typed value: "2.5", "-6", "2k" (x1000), with any unit text after the number ignored.
+inline bool parseTypedValue(const char* text, float& out)
+{
+    char* end = nullptr;
+    const float v = std::strtof(text, &end);
+    if (end == text)
+        return false;
+    while (*end == ' ')
+        ++end;
+    out = (*end == 'k' || *end == 'K') ? v * 1000.f : v;
+    return std::isfinite(out);
+}
+
 // The recipe's images as OpenGL textures, loaded the first time they are drawn (a GL context is current
 // then). Call release() while the context is still current, before the editor goes away.
 class ImageSet
@@ -719,6 +752,28 @@ private:
         case Control::Slider:
             bx = cx + 12.f * s, by = top + 2.f * s, bw = cellW - 24.f * s, bh = 20.f * s, valueY = top + 30.f * s;
             break;
+        case Control::Vslider:
+            bw = 24.f * s, bh = 110.f * s, bx = cx + (cellW - bw) * 0.5f, by = top, valueY = top + bh + 8.f * s;
+            break;
+        case Control::Number:
+            bw = 84.f * s, bh = 22.f * s, bx = cx + (cellW - bw) * 0.5f, by = top + 6.f * s, valueY = -1.f;
+            break;
+        case Control::Selector:
+            bw = bh = 110.f * s, bx = cx + (cellW - bw) * 0.5f, by = top, valueY = -1.f;
+            break;
+        case Control::Led:
+        case Control::Checkbox:
+            bw = bh = 22.f * s, bx = cx + (cellW - bw) * 0.5f, by = top + 8.f * s, valueY = -1.f;
+            break;
+        case Control::Footswitch:
+            bw = 56.f * s, bh = 76.f * s, bx = cx + (cellW - bw) * 0.5f, by = top, valueY = -1.f;
+            break;
+        case Control::Lever:
+            bw = 28.f * s, bh = 48.f * s, bx = cx + (cellW - bw) * 0.5f, by = top + 6.f * s, valueY = top + 62.f * s;
+            break;
+        case Control::Radio:
+            bx = cx + 12.f * s, by = top, bw = cellW - 24.f * s, bh = 22.f * s * p.numChoices, valueY = -1.f;
+            break;
         case Control::Toggle:
             bw = 46.f * s, bh = 24.f * s, bx = cx + (cellW - bw) * 0.5f, by = top + 16.f * s;
             valueY = top + kKnobSize * s + 8.f * s;
@@ -798,6 +853,228 @@ private:
             }
             break;
         }
+        case Control::Vslider: {
+            if (!editing_[i])
+                dragT_[i] = toNormalized(p, values[i]);
+            float t = dragT_[i];
+            const float origin = (p.min < 0.f && p.max > 0.f && p.scale == Scale::Linear) ? toNormalized(p, 0.f) : 0.f;
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##v", ImVec2(bw, bh));
+            hovered = ImGui::IsItemHovered();
+            active = ImGui::IsItemActive();
+            if (active)
+            {
+                const ImGuiIO& io = ImGui::GetIO();
+                float nt = io.KeyShift ? t - io.MouseDelta.y / (bh * 10.f) : 1.f - (io.MousePos.y - pos.y) / bh;
+                nt = std::min(1.f, std::max(0.f, nt));
+                if (nt != t)
+                {
+                    t = nt;
+                    dragT_[i] = t;
+                    newValue = fromNormalized(p, t);
+                    if (p.type == ParamType::Int)
+                        newValue = std::round(newValue);
+                    changed = newValue != values[i];
+                }
+            }
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float cx = pos.x + bw * 0.5f, tw = std::max(3.f, bw * 0.22f), capH = bw * 0.55f;
+            const float y0 = pos.y + capH * 0.5f, y1 = pos.y + bh - capH * 0.5f;
+            const float yv = y1 - (y1 - y0) * t, yo = y1 - (y1 - y0) * origin;
+            dl->AddRectFilled(ImVec2(cx - tw * 0.5f, y0), ImVec2(cx + tw * 0.5f, y1),
+                              ImGui::GetColorU32(st.Colors[ImGuiCol_FrameBgActive]), tw * 0.5f);
+            if (std::fabs(yv - yo) > 0.5f)
+                dl->AddRectFilled(ImVec2(cx - tw * 0.5f, std::min(yv, yo)), ImVec2(cx + tw * 0.5f, std::max(yv, yo)),
+                                  ImGui::GetColorU32(accent), tw * 0.5f);
+            const ImVec4 cap = hovered || active ? st.Colors[ImGuiCol_ButtonHovered] : st.Colors[ImGuiCol_Button];
+            dl->AddRectFilled(ImVec2(pos.x, yv - capH * 0.5f), ImVec2(pos.x + bw, yv + capH * 0.5f),
+                              ImGui::GetColorU32(cap), 3.f * s);
+            dl->AddRect(ImVec2(pos.x, yv - capH * 0.5f), ImVec2(pos.x + bw, yv + capH * 0.5f), ImGui::GetColorU32(accent),
+                        3.f * s, 0, std::max(1.f, s));
+            dl->AddLine(ImVec2(pos.x + bw * 0.2f, yv), ImVec2(pos.x + bw * 0.8f, yv), ImGui::GetColorU32(bright),
+                        std::max(1.f, s));
+            showsValue = true;
+            break;
+        }
+        case Control::Number: {
+            if (!editing_[i])
+                dragT_[i] = toNormalized(p, values[i]);
+            float t = dragT_[i];
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##n", ImVec2(bw, bh));
+            hovered = ImGui::IsItemHovered();
+            active = ImGui::IsItemActive();
+            if (knobDrag(&t))
+            {
+                dragT_[i] = t;
+                newValue = fromNormalized(p, t);
+                if (p.type == ParamType::Int)
+                    newValue = std::round(newValue);
+                changed = newValue != values[i];
+            }
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(pos, ImVec2(pos.x + bw, pos.y + bh),
+                              ImGui::GetColorU32(hovered || active ? st.Colors[ImGuiCol_FrameBgHovered] : st.Colors[ImGuiCol_FrameBg]),
+                              4.f * s);
+            dl->AddRect(pos, ImVec2(pos.x + bw, pos.y + bh), ImGui::GetColorU32(active ? accent : st.Colors[ImGuiCol_Border]),
+                        4.f * s, 0, std::max(1.f, s));
+            char buf[64];
+            formatValue(p, changed ? newValue : values[i], buf, sizeof(buf));
+            const ImVec2 ts = ImGui::CalcTextSize(buf);
+            dl->AddText(ImVec2(pos.x + (bw - ts.x) * 0.5f, pos.y + (bh - ts.y) * 0.5f), ImGui::GetColorU32(bright), buf);
+            break;
+        }
+        case Control::Selector: {
+            const uint32_t n = stepCount(p);
+            const int cur = (int)std::lround(values[i] - p.min);
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##sel", ImVec2(bw, bh));
+            hovered = ImGui::IsItemHovered();
+            const ImVec2 c(pos.x + bw * 0.5f, pos.y + bh * 0.5f);
+            const float r = bw * 0.2f;
+            if (ImGui::IsItemClicked())
+            {
+                // a click on a label picks it; a click on the knob steps forward
+                const ImVec2 m = ImGui::GetIO().MousePos;
+                const float dx = m.x - c.x, dy = m.y - c.y;
+                int pick = (cur + 1) % (int)n;
+                if (dx * dx + dy * dy > r * r)
+                {
+                    const float a = std::atan2(dx, -dy);
+                    float best = 1e9f;
+                    for (uint32_t k = 0; k < n; ++k)
+                    {
+                        const float d = std::fabs(a - selectorAngle(k, n));
+                        if (d < best)
+                            best = d, pick = (int)k;
+                    }
+                }
+                newValue = p.min + (float)pick;
+                changed = pick != cur;
+            }
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            for (uint32_t k = 0; k < n; ++k)
+            {
+                const float a = selectorAngle(k, n);
+                const ImVec2 dir(std::sin(a), -std::cos(a));
+                char num[16];
+                const char* label = p.type == ParamType::Choice ? p.choices[k] : (std::snprintf(num, sizeof(num), "%d", (int)p.min + (int)k), num);
+                const ImVec2 ts = ImGui::CalcTextSize(label);
+                dl->AddCircleFilled(ImVec2(c.x + dir.x * (r + 5.f * s), c.y + dir.y * (r + 5.f * s)), 1.5f * s,
+                                    ImGui::GetColorU32(st.Colors[ImGuiCol_TextDisabled]));
+                // the label's nearest edge sits just outside the tick
+                const float lr = r + 10.f * s + std::fabs(dir.x) * ts.x * 0.5f + std::fabs(dir.y) * ts.y * 0.5f;
+                dl->AddText(ImVec2(c.x + dir.x * lr - ts.x * 0.5f, c.y + dir.y * lr - ts.y * 0.5f),
+                            ImGui::GetColorU32((int)k == cur ? bright : st.Colors[ImGuiCol_TextDisabled]), label);
+            }
+            const float a = selectorAngle((uint32_t)std::max(0, cur), n);
+            const ImVec2 dir(std::sin(a), -std::cos(a));
+            dl->AddCircleFilled(c, r, ImGui::GetColorU32(hovered ? st.Colors[ImGuiCol_ButtonHovered] : st.Colors[ImGuiCol_Button]), 32);
+            dl->AddCircle(c, r, ImGui::GetColorU32(st.Colors[ImGuiCol_Border]), 32, std::max(1.f, s));
+            dl->AddLine(ImVec2(c.x + dir.x * r * 0.2f, c.y + dir.y * r * 0.2f), ImVec2(c.x + dir.x * r * 0.9f, c.y + dir.y * r * 0.9f),
+                        ImGui::GetColorU32(accent), std::max(2.f, r * 0.14f));
+            break;
+        }
+        case Control::Led:
+        case Control::Checkbox:
+        case Control::Footswitch:
+        case Control::Lever: {
+            const bool on = values[i] > 0.5f;
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            if (ImGui::InvisibleButton("##b", ImVec2(bw, bh)))
+            {
+                newValue = on ? 0.f : 1.f;
+                changed = true;
+            }
+            hovered = ImGui::IsItemHovered();
+            const bool down = ImGui::IsItemActive();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImU32 off = ImGui::GetColorU32(st.Colors[ImGuiCol_FrameBgActive]);
+            const ImU32 border = ImGui::GetColorU32(st.Colors[ImGuiCol_Border]);
+            const ImU32 acc = ImGui::GetColorU32(accent);
+            auto led = [&](ImVec2 c, float r) {
+                if (on)
+                {
+                    dl->AddCircleFilled(c, r * 1.7f, ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, 0.22f)), 24);
+                    dl->AddCircleFilled(c, r, acc, 24);
+                    dl->AddCircleFilled(ImVec2(c.x - r * 0.3f, c.y - r * 0.3f), r * 0.35f,
+                                        ImGui::GetColorU32(ImVec4(1, 1, 1, 0.55f)), 12);
+                }
+                else
+                    dl->AddCircleFilled(c, r, off, 24);
+                dl->AddCircle(c, r, border, 24, std::max(1.f, s));
+            };
+            if (p.control == Control::Led)
+                led(ImVec2(pos.x + bw * 0.5f, pos.y + bh * 0.5f), bw * 0.5f - 1.f);
+            else if (p.control == Control::Checkbox)
+            {
+                dl->AddRectFilled(pos, ImVec2(pos.x + bw, pos.y + bh),
+                                  on ? acc : ImGui::GetColorU32(hovered ? st.Colors[ImGuiCol_FrameBgHovered] : st.Colors[ImGuiCol_FrameBg]),
+                                  4.f * s);
+                dl->AddRect(pos, ImVec2(pos.x + bw, pos.y + bh), on ? acc : border, 4.f * s, 0, std::max(1.f, s));
+                if (on)
+                {
+                    const ImU32 mark = onAccent(accentRgb);
+                    dl->AddLine(ImVec2(pos.x + bw * 0.24f, pos.y + bh * 0.52f), ImVec2(pos.x + bw * 0.43f, pos.y + bh * 0.7f), mark, std::max(1.5f, bw * 0.1f));
+                    dl->AddLine(ImVec2(pos.x + bw * 0.43f, pos.y + bh * 0.7f), ImVec2(pos.x + bw * 0.76f, pos.y + bh * 0.3f), mark, std::max(1.5f, bw * 0.1f));
+                }
+            }
+            else if (p.control == Control::Footswitch)
+            {
+                led(ImVec2(pos.x + bw * 0.5f, pos.y + bw * 0.11f), bw * 0.09f);
+                const ImVec2 c(pos.x + bw * 0.5f, pos.y + bh - bw * 0.5f);
+                const float r = bw * 0.46f;
+                const ImVec4 metal = rgb(0xb4b8bf);
+                dl->AddCircleFilled(c, r, ImGui::GetColorU32(darken(metal, 0.6f)), 32);
+                dl->AddCircleFilled(c, r * 0.86f, ImGui::GetColorU32(darken(metal, 0.3f)), 32);
+                const float press = down ? 0.06f : 0.f;
+                for (int k = 0; k <= 6; ++k)
+                {
+                    const float f = k / 6.f;
+                    dl->AddCircleFilled(ImVec2(c.x - r * 0.08f * f, c.y - r * 0.08f * f + r * press), r * (0.7f - 0.3f * f),
+                                        ImGui::GetColorU32(lighten(darken(metal, 0.2f - 0.2f * f), 0.4f * f + (hovered ? 0.08f : 0.f))), 28);
+                }
+            }
+            else // lever
+            {
+                const ImVec2 c(pos.x + bw * 0.5f, pos.y + bh * 0.5f);
+                dl->AddCircleFilled(c, bw * 0.46f, ImGui::GetColorU32(darken(rgb(0xb4b8bf), 0.5f)), 24);
+                dl->AddCircleFilled(c, bw * 0.3f, ImGui::GetColorU32(rgb(0x8a8e95)), 24);
+                const ImVec2 tip(c.x, on ? pos.y + bw * 0.2f : pos.y + bh - bw * 0.2f);
+                dl->AddLine(c, tip, ImGui::GetColorU32(rgb(0xc9ccd2)), bw * 0.24f);
+                dl->AddCircleFilled(tip, bw * 0.2f, ImGui::GetColorU32(lighten(rgb(0xc9ccd2), hovered ? 0.2f : 0.f)), 16);
+                showsValue = true;
+            }
+            break;
+        }
+        case Control::Radio: {
+            const int cur = (int)std::lround(values[i]);
+            const float rowH = bh / (float)std::max<uint32_t>(1, p.numChoices);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            for (uint32_t c = 0; c < p.numChoices; ++c)
+            {
+                ImGui::PushID((int)c);
+                ImGui::SetCursorPos(ImVec2(bx, by + c * rowH));
+                const ImVec2 pos = ImGui::GetCursorScreenPos();
+                if (ImGui::InvisibleButton("##r", ImVec2(bw, rowH)) && (int)c != cur)
+                {
+                    newValue = (float)c;
+                    changed = true;
+                }
+                const bool rowHover = ImGui::IsItemHovered();
+                hovered = hovered || rowHover;
+                const ImVec2 dot(pos.x + 8.f * s, pos.y + rowH * 0.5f);
+                dl->AddCircle(dot, 6.f * s, ImGui::GetColorU32(rowHover ? bright : st.Colors[ImGuiCol_TextDisabled]), 20,
+                              std::max(1.f, 1.2f * s));
+                if ((int)c == cur)
+                    dl->AddCircleFilled(dot, 3.5f * s, ImGui::GetColorU32(accent), 16);
+                const ImVec2 ts = ImGui::CalcTextSize(p.choices[c]);
+                dl->AddText(ImVec2(pos.x + 22.f * s, pos.y + (rowH - ts.y) * 0.5f),
+                            ImGui::GetColorU32((int)c == cur ? bright : st.Colors[ImGuiCol_TextDisabled]), p.choices[c]);
+                ImGui::PopID();
+            }
+            break;
+        }
         case Control::Toggle: {
             bool v = values[i] > 0.5f;
             ImGuiTogglePalette onPalette = {};
@@ -829,7 +1106,8 @@ private:
             const ImVec4 fill = on ? (hovered ? mix(accent, bright, 0.15f) : accent)
                                    : (hovered ? st.Colors[ImGuiCol_ButtonHovered] : st.Colors[ImGuiCol_Button]);
             dl->AddRectFilled(pos, ImVec2(pos.x + bw, pos.y + bh), ImGui::GetColorU32(fill), 5.f * s);
-            const char* label = on ? "On" : "Off";
+            // a two-option choice shows its option names
+            const char* label = p.type == ParamType::Choice ? p.choices[on ? 1 : 0] : (on ? "On" : "Off");
             const ImVec2 ts = ImGui::CalcTextSize(label);
             dl->AddText(ImVec2(pos.x + (bw - ts.x) * 0.5f, pos.y + (bh - ts.y) * 0.5f),
                         on ? onAccent(accentRgb) : ImGui::GetColorU32(bright), label);
@@ -892,14 +1170,58 @@ private:
         }
         }
 
-        const bool continuous = p.type == ParamType::Float || p.type == ParamType::Int;
+        const bool continuous = (p.type == ParamType::Float || p.type == ParamType::Int) && p.control != Control::Selector;
+        const ImGuiIO& io = ImGui::GetIO();
 
+        // typing a value: Cmd/Ctrl+click on a continuous control, or double-click on a number box
+        const bool wantsEntry = continuous && hovered &&
+            ((ImGui::IsMouseClicked(ImGuiMouseButton_Left) && (io.KeyCtrl || io.KeySuper)) ||
+             (p.control == Control::Number && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)));
+        if (wantsEntry)
+        {
+            std::snprintf(entry_, sizeof(entry_), p.type == ParamType::Int ? "%.0f" : "%g", values[i]);
+            entryIndex_ = (int)i;
+            entryFocus_ = true;
+            ImGui::OpenPopup("##entry");
+            changed = false;
+            active = false;
+        }
         // double-click resets to default
-        if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && p.type != ParamType::Choice &&
-            p.control != Control::Button)
+        else if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && p.type != ParamType::Choice &&
+                 p.type != ParamType::Bool && p.control != Control::Number && p.control != Control::Selector)
         {
             newValue = p.def;
             changed = true;
+        }
+
+        if (entryIndex_ == (int)i)
+        {
+            ImGui::SetNextWindowPos(ImVec2(ImGui::GetWindowPos().x + bx, ImGui::GetWindowPos().y + by + bh * 0.5f - 12.f * s));
+            if (ImGui::BeginPopup("##entry"))
+            {
+                if (entryFocus_)
+                {
+                    ImGui::SetKeyboardFocusHere();
+                    entryFocus_ = false;
+                }
+                ImGui::SetNextItemWidth(std::max(90.f * s, bw));
+                if (ImGui::InputText("##text", entry_, sizeof(entry_),
+                                     ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
+                {
+                    float typed;
+                    if (parseTypedValue(entry_, typed))
+                    {
+                        newValue = std::min(std::max(p.type == ParamType::Int ? std::round(typed) : typed, p.min), p.max);
+                        changed = true;
+                    }
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+                    ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+            else
+                entryIndex_ = -1;
         }
 
         // mouse wheel nudges knobs and sliders
@@ -944,6 +1266,9 @@ private:
     }
 
     ImageSet images_;
+    char entry_[32] = {};
+    int entryIndex_ = -1;
+    bool entryFocus_ = false;
     bool editing_[kSize] = {};
     float dragT_[kSize] = {};
 };

@@ -714,7 +714,9 @@ const PALETTE = {
   light: { bg: "#f2f1ee", panel: "#ffffff", text: "#1e1f23", muted: "#6b6e75", border: "#d6d4cf", frame: "#e4e2dd", track: "#d6d4cf", button: "#e4e2dd" },
 };
 const CONTROL_LABELS = { "knob": "Knob", "small-knob": "Small knob", "large-knob": "Large knob", "slider": "Slider",
-  "toggle": "Toggle", "button": "Button", "dropdown": "Drop-down", "buttons": "Buttons" };
+  "vslider": "Fader", "number": "Number box", "selector": "Selector", "toggle": "Toggle", "button": "Button",
+  "led": "LED", "footswitch": "Footswitch", "lever": "Lever", "checkbox": "Checkbox", "dropdown": "Drop-down",
+  "buttons": "Buttons", "radio": "Radio list" };
 
 function showTab(tab) {
   uiEd.tab = tab;
@@ -776,6 +778,7 @@ function cellSize(p) {
     const longest = Math.max(...p.choices.map((c) => [...c].length));
     return [Math.min(472, Math.max(118, 16 + p.choices.length * (longest * 7 + 16))), 84];
   }
+  if (p.control === "radio") return [118, 24 + 22 * p.choices.length + 12];
   return uiEd.model.geometry.cells[p.control];
 }
 
@@ -953,8 +956,12 @@ function freeBox(p) {
     return [d, d];
   }
   if (p.control === "buttons") return [p.size || cellSize(p)[0] - 16, 28];
+  if (p.control === "radio") return [p.size || 100, 22 * p.choices.length];
   const [w, h] = G.free_box[p.control];
-  return [p.control === "toggle" ? w : (p.size || w), h];
+  if (p.control === "toggle" || !p.size) return [w, h];
+  if (p.control === "vslider") return [w, p.size];
+  if (["selector", "led", "footswitch", "lever", "checkbox"].includes(p.control)) return [p.size, p.size * h / w];
+  return [p.size, h];
 }
 
 function freeBase() {
@@ -1002,6 +1009,87 @@ function drawControl(c, p, bx, by, bw, bh, pal, accent) {
     c.strokeStyle = accent; c.lineWidth = Math.max(1, bh * 0.07); c.stroke();
     return true;
   }
+  const disc = (x, y, r, color) => { c.fillStyle = color; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill(); };
+  const ring = (x, y, r, color, w) => { c.strokeStyle = color; c.lineWidth = w; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.stroke(); };
+  const line = (x0, y0, x1, y1, color, w) => { c.strokeStyle = color; c.lineWidth = w; c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke(); };
+  if (p.control === "vslider") {
+    const cx = bx + bw / 2, tw = Math.max(3, bw * 0.22), capH = bw * 0.55;
+    const y0 = by + capH / 2, y1 = by + bh - capH / 2, yv = y1 - (y1 - y0) * t, yo = y1 - (y1 - y0) * origin;
+    rrect(cx - tw / 2, y0, tw, y1 - y0, tw / 2, pal.track);
+    if (Math.abs(yv - yo) > 0.5) rrect(cx - tw / 2, Math.min(yv, yo), tw, Math.abs(yv - yo), tw / 2, accent);
+    rrect(bx, yv - capH / 2, bw, capH, 3, pal.button);
+    c.strokeStyle = accent; c.lineWidth = 1; c.beginPath(); c.roundRect(bx, yv - capH / 2, bw, capH, 3); c.stroke();
+    line(bx + bw * 0.2, yv, bx + bw * 0.8, yv, pal.text, 1);
+    return true;
+  }
+  if (p.control === "number") {
+    rrect(bx, by, bw, bh, 4, pal.frame);
+    c.strokeStyle = pal.border; c.lineWidth = 1; c.beginPath(); c.roundRect(bx + 0.5, by + 0.5, bw - 1, bh - 1, 4); c.stroke();
+    const txt = formatValue(p, v);
+    c.fillStyle = pal.text; c.fillText(txt, bx + (bw - c.measureText(txt).width) / 2, by + (bh - 15) / 2 + 1);
+    return false;
+  }
+  if (p.control === "selector") {
+    const n = p.type === "choice" ? p.choices.length : Math.round(p.max - p.min) + 1;
+    const cur = Math.round(v - p.min);
+    const cx = bx + bw / 2, cy = by + bh / 2, r = bw * 0.2;
+    const span = Math.min(270, (n - 1) * 90) * Math.PI / 180;
+    const ang = (k) => n > 1 ? -span / 2 + span * k / (n - 1) : 0;
+    for (let k = 0; k < n; k++) {
+      const a = ang(k), dx = Math.sin(a), dy = -Math.cos(a);
+      const label = p.type === "choice" ? p.choices[k] : String(Math.round(p.min) + k);
+      disc(cx + dx * (r + 5), cy + dy * (r + 5), 1.5, pal.muted);
+      const tw = c.measureText(label).width, lr = r + 10 + Math.abs(dx) * tw / 2 + Math.abs(dy) * 7.5;
+      c.fillStyle = k === cur ? pal.text : pal.muted;
+      c.fillText(label, cx + dx * lr - tw / 2, cy + dy * lr - 7.5);
+    }
+    const a = ang(Math.max(0, cur)), dx = Math.sin(a), dy = -Math.cos(a);
+    disc(cx, cy, r, pal.button); ring(cx, cy, r, pal.border, 1);
+    line(cx + dx * r * 0.2, cy + dy * r * 0.2, cx + dx * r * 0.9, cy + dy * r * 0.9, accent, Math.max(2, r * 0.14));
+    return false;
+  }
+  if (["led", "checkbox", "footswitch", "lever"].includes(p.control)) {
+    const on = v > 0.5;
+    const led = (x, y, r) => {
+      if (on) { c.globalAlpha = 0.22; disc(x, y, r * 1.7, accent); c.globalAlpha = 1; disc(x, y, r, accent);
+        c.globalAlpha = 0.55; disc(x - r * 0.3, y - r * 0.3, r * 0.35, "#ffffff"); c.globalAlpha = 1; }
+      else disc(x, y, r, pal.track);
+      ring(x, y, r, pal.border, 1);
+    };
+    if (p.control === "led") led(bx + bw / 2, by + bh / 2, bw / 2 - 1);
+    else if (p.control === "checkbox") {
+      rrect(bx, by, bw, bh, 4, on ? accent : pal.frame);
+      c.strokeStyle = on ? accent : pal.border; c.lineWidth = 1; c.beginPath(); c.roundRect(bx + 0.5, by + 0.5, bw - 1, bh - 1, 4); c.stroke();
+      if (on) {
+        const mk = onAccent(accent), w = Math.max(1.5, bw * 0.1);
+        line(bx + bw * 0.24, by + bh * 0.52, bx + bw * 0.43, by + bh * 0.7, mk, w);
+        line(bx + bw * 0.43, by + bh * 0.7, bx + bw * 0.76, by + bh * 0.3, mk, w);
+      }
+    } else if (p.control === "footswitch") {
+      led(bx + bw / 2, by + bw * 0.11, bw * 0.09);
+      const cx = bx + bw / 2, cy = by + bh - bw / 2, r = bw * 0.46, metal = "#b4b8bf";
+      disc(cx, cy, r, darken(metal, 0.6)); disc(cx, cy, r * 0.86, darken(metal, 0.3));
+      for (let k = 0; k <= 6; k++) { const f = k / 6; disc(cx - r * 0.08 * f, cy - r * 0.08 * f, r * (0.7 - 0.3 * f), lighten(darken(metal, 0.2 - 0.2 * f), 0.4 * f)); }
+    } else {
+      const cx = bx + bw / 2, cy = by + bh / 2;
+      disc(cx, cy, bw * 0.46, darken("#b4b8bf", 0.5)); disc(cx, cy, bw * 0.3, "#8a8e95");
+      const ty = on ? by + bw * 0.2 : by + bh - bw * 0.2;
+      c.lineCap = "butt"; line(cx, cy, cx, ty, "#c9ccd2", bw * 0.24); disc(cx, ty, bw * 0.2, "#c9ccd2");
+      return true;
+    }
+    return false;
+  }
+  if (p.control === "radio") {
+    const rowH = bh / p.choices.length, cur = Math.round(v);
+    p.choices.forEach((label, k) => {
+      const y = by + k * rowH;
+      ring(bx + 8, y + rowH / 2, 6, pal.muted, 1.2);
+      if (k === cur) disc(bx + 8, y + rowH / 2, 3.5, accent);
+      c.fillStyle = k === cur ? pal.text : pal.muted;
+      c.fillText(label, bx + 22, y + (rowH - 15) / 2 + 1);
+    });
+    return false;
+  }
   if (p.control === "toggle") {
     const on = v > 0.5;
     rrect(bx, by, bw, bh, bh / 2, on ? accent : pal.track);
@@ -1012,7 +1100,7 @@ function drawControl(c, p, bx, by, bw, bh, pal, accent) {
   if (p.control === "button") {
     const on = v > 0.5;
     rrect(bx, by, bw, bh, 5, on ? accent : pal.button);
-    const label = on ? "On" : "Off";
+    const label = p.type === "choice" ? p.choices[on ? 1 : 0] : on ? "On" : "Off";
     c.fillStyle = on ? onAccent(accent) : pal.text;
     c.fillText(label, bx + (bw - c.measureText(label).width) / 2, by + (bh - 15) / 2 + 1);
     return false;
@@ -1052,6 +1140,13 @@ function flowBox(p, cx, cy, cw) {
     case "button": return { x: cx + (cw - 84) / 2, y: top + 14, w: 84, h: 30, valueY: -1 };
     case "dropdown": return { x: cx + 7, y: top + 16, w: cw - 14, h: 19, valueY: -1 };
     case "buttons": return { x: cx + 8, y: top + 4, w: cw - 16, h: 28, valueY: -1 };
+    case "vslider": return { x: cx + (cw - 24) / 2, y: top, w: 24, h: 110, valueY: top + 118 };
+    case "number": return { x: cx + (cw - 84) / 2, y: top + 6, w: 84, h: 22, valueY: -1 };
+    case "selector": return { x: cx + (cw - 110) / 2, y: top, w: 110, h: 110, valueY: -1 };
+    case "led": case "checkbox": return { x: cx + (cw - 22) / 2, y: top + 8, w: 22, h: 22, valueY: -1 };
+    case "footswitch": return { x: cx + (cw - 56) / 2, y: top, w: 56, h: 76, valueY: -1 };
+    case "lever": return { x: cx + (cw - 28) / 2, y: top + 6, w: 28, h: 48, valueY: top + 62 };
+    case "radio": return { x: cx + 12, y: top, w: cw - 24, h: 22 * p.choices.length, valueY: -1 };
     default: {
       const d = p.control === "small-knob" ? 40 : p.control === "large-knob" ? 88 : 58;
       return { x: cx + (cw - d) / 2, y: top, w: d, h: d, valueY: top + d + 8 };
@@ -1349,14 +1444,18 @@ function renderInspector() {
       if (!["knob", "small-knob", "large-knob"].includes(sel.control)) sel.knob_style = "";
       changed();
     } });
-    for (const opt of m.controls[sel.type]) s.append(el("option", { value: opt }, CONTROL_LABELS[opt]));
+    for (const opt of m.controls[sel.type]) {
+      // on/off looks fit a choice only when it has exactly two options
+      if (sel.type === "choice" && m.switch_controls.includes(opt) && sel.choices.length !== 2) continue;
+      s.append(el("option", { value: opt }, CONTROL_LABELS[opt]));
+    }
     s.value = sel.control;
     box.append(field("Draw as", s));
     if (free) {
       const num = (key, placeholder) => el("input", { type: "text", value: sel[key] ?? "", placeholder, style: "width:64px",
         onchange: (e) => { const v = parseFloat(e.target.value); sel[key] = Number.isFinite(v) ? v : (key === "size" ? null : 0); changed(); } });
       box.append(field("Position", num("x", "x"), num("y", "y")));
-      if (sel.control !== "toggle") box.append(field("Size", num("size", "auto")));
+      if (sel.control !== "toggle") box.append(field(sel.control === "vslider" ? "Height" : "Size", num("size", "auto")));
     }
     const tri = (key, label) => {
       const s2 = el("select", { onchange: (e) => { sel[key] = e.target.value === "" ? null : e.target.value === "1"; changed(); } },

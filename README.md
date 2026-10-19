@@ -76,9 +76,11 @@ jump to the line in the recipe. You can also edit the recipe by hand, or start f
 
 The **Interface** tab shows a live preview of the plugin's editor. Change the accent color, light or dark
 theme, background and subtitle; pick a knob style (modern, vintage, flat, minimal, metal), knob color and
-scale marks; drag controls into titled groups; and pick how each one is drawn (knob in three sizes,
-slider, toggle or button, drop-down or button row). It all goes into the recipe's `[ui]`, `[[ui.group]]`,
-`control` and `knob_style` keys, so the AI and the build see the same thing.
+scale marks; drag controls into titled groups; and pick how each one is drawn: knob in three sizes,
+slider or fader, number box or rotary selector; toggle, button, LED, footswitch, lever or checkbox;
+drop-down, button row or radio list. It all goes into the recipe's `[ui]`, `[[ui.group]]`,
+`control` and `knob_style` keys, so the AI and the build see the same thing. In the plugin, Cmd/Ctrl+click
+a knob, slider or fader (or double-click a number box) to type an exact value.
 
 For a fully custom look, switch **Arrange** to *Free position* and add PNG images: a background (the
 window takes its size) and a knob image — one picture that rotates, or a *filmstrip* of frames like the

@@ -109,11 +109,14 @@ DEFAULT_ACCENT = "#E8A33D"
 
 # Editor controls per parameter type; the first one is the default.
 CONTROLS = {
-    "float": ("knob", "small-knob", "large-knob", "slider"),
-    "int": ("knob", "small-knob", "large-knob", "slider"),
-    "bool": ("toggle", "button"),
-    "choice": ("dropdown", "buttons"),
+    "float": ("knob", "small-knob", "large-knob", "slider", "vslider", "number"),
+    "int": ("knob", "small-knob", "large-knob", "slider", "vslider", "number", "selector"),
+    "bool": ("toggle", "button", "led", "footswitch", "lever", "checkbox"),
+    "choice": ("dropdown", "buttons", "radio", "selector",
+               "toggle", "button", "led", "footswitch", "lever", "checkbox"),
 }
+SWITCH_CONTROLS = ("toggle", "button", "led", "footswitch", "lever", "checkbox")  # on/off look
+SELECTOR_MAX_STEPS = 12
 THEMES = ("dark", "light")
 KNOB_STYLES = ("modern", "vintage", "flat", "minimal", "metal")
 KNOB_CONTROLS = ("knob", "small-knob", "large-knob")
@@ -123,7 +126,11 @@ MAX_IMAGE_BYTES = 4_000_000
 # Free layout: default control box sizes (width, height) in unscaled pixels; knobs are square.
 PARAM_UI_KEYS = ("control", "knob_style", "x", "y", "size", "label", "value", "knob_image", "knob_frames")
 FREE_BOX = {"knob": (58, 58), "small-knob": (40, 40), "large-knob": (88, 88), "slider": (200, 20),
-            "toggle": (46, 24), "button": (84, 30), "dropdown": (104, 19)}
+            "vslider": (24, 110), "number": (84, 22), "selector": (110, 110), "toggle": (46, 24),
+            "button": (84, 30), "led": (22, 22), "footswitch": (56, 76), "lever": (28, 48), "checkbox": (22, 22),
+            "dropdown": (104, 19)}
+# free layout: `size` sets the width and the height follows proportionally (vslider: `size` is its height)
+FREE_UNIFORM = ("selector", "led", "footswitch", "lever", "checkbox")
 
 # Editor geometry in unscaled pixels. framework/include/cookbook/Controls.hpp and the Plugin Studio preview
 # (tools/studio/static/index.html) use the same numbers and the same layout rules: keep all three in sync.
@@ -134,9 +141,11 @@ UI_TITLE_H = 28
 UI_GROUP_GAP = 6
 UI_BOTTOM = 12
 UI_MIN_WIDTH = 300
-UI_CELL = {  # control -> (width, height)
+UI_CELL = {  # control -> (width, height); "buttons" and "radio" depend on their choices (cell_size)
     "knob": (118, 132), "small-knob": (92, 110), "large-knob": (150, 168), "slider": (236, 84),
-    "toggle": (118, 132), "button": (118, 132), "dropdown": (118, 132),
+    "vslider": (70, 170), "number": (118, 84), "selector": (150, 160),
+    "toggle": (118, 132), "button": (118, 132), "led": (118, 84), "footswitch": (118, 132), "lever": (118, 132),
+    "checkbox": (118, 84), "dropdown": (118, 132),
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -605,6 +614,13 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
             _err(errors, f"{where}: control for a {ptype} parameter must be one of "
                          f"{', '.join(repr(c) for c in CONTROLS[ptype])}")
             control = CONTROLS[ptype][0]
+        if ptype == "choice" and control in SWITCH_CONTROLS and len(choices) != 2:
+            _err(errors, f"{where}: '{control}' works for a choice with exactly 2 options (off = the first)")
+            control = CONTROLS[ptype][0]
+        steps = len(choices) if ptype == "choice" else int(pmax - pmin) + 1 if ptype == "int" else 0
+        if control == "selector" and not 2 <= steps <= SELECTOR_MAX_STEPS:
+            _err(errors, f"{where}: a selector shows every position; use it for 2-{SELECTOR_MAX_STEPS} steps")
+            control = CONTROLS[ptype][0]
 
         pknob = rp.get("knob_style", "")
         if pknob and pknob not in KNOB_STYLES:
@@ -846,6 +862,8 @@ def cell_size(p: Param) -> tuple[int, int]:
     if p.control == "buttons":
         seg = max(len(c) for c in p.choices) * 7 + 16
         return min(472, max(118, 16 + len(p.choices) * seg)), 84
+    if p.control == "radio":
+        return 118, 24 + 22 * len(p.choices) + 12
     return UI_CELL[p.control]
 
 
@@ -887,8 +905,16 @@ def free_box(r: Recipe, p: Param) -> tuple[float, float]:
         return d, d
     if p.control == "buttons":
         return p.size or cell_size(p)[0] - 16, 28
+    if p.control == "radio":
+        return p.size or 100, 22 * len(p.choices)
     w, h = FREE_BOX[p.control]
-    return (p.size or w) if p.control != "toggle" else w, h
+    if p.control == "toggle" or not p.size:
+        return w, h
+    if p.control == "vslider":
+        return w, p.size
+    if p.control in FREE_UNIFORM:
+        return p.size, p.size * h / w
+    return p.size, h
 
 
 def free_base_size(r: Recipe) -> tuple[int, int]:
@@ -961,6 +987,7 @@ def ui_model(r: Recipe) -> dict:
                     "knob_image": p.knob_image, "knob_frames": p.knob_frames}
                    for p in r.params],
         "controls": CONTROLS,
+        "switch_controls": SWITCH_CONTROLS,
         "knob_styles": KNOB_STYLES,
         "geometry": {"pad": UI_PAD, "header": UI_HEADER_H, "subtitle": UI_SUBTITLE_H, "title": UI_TITLE_H,
                      "gap": UI_GROUP_GAP, "bottom": UI_BOTTOM, "min_width": UI_MIN_WIDTH, "cells": UI_CELL,

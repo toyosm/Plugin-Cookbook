@@ -10,9 +10,15 @@ namespace cookbook {
 enum class ParamType { Float, Int, Bool, Choice };
 enum class Scale { Linear, Log };
 
-// How a parameter is drawn. Float/int: Knob, SmallKnob, LargeKnob, Slider. Bool: Toggle, Button.
-// Choice: Dropdown, Buttons.
-enum class Control { Knob, SmallKnob, LargeKnob, Slider, Toggle, Button, Dropdown, Buttons };
+// How a parameter is drawn. Float/int: Knob, SmallKnob, LargeKnob, Slider, Vslider, Number (int also
+// Selector). Bool: Toggle, Button, Led, Footswitch, Lever, Checkbox. Choice: Dropdown, Buttons, Radio, Selector,
+// and, with exactly two options, the bool controls (on = the second option).
+enum class Control
+{
+    Knob, SmallKnob, LargeKnob, Slider, Vslider, Number, Selector,
+    Toggle, Button, Led, Footswitch, Lever, Checkbox,
+    Dropdown, Buttons, Radio
+};
 
 // How a knob looks (knob controls only).
 enum class KnobStyle { Modern, Vintage, Flat, Minimal, Metal };

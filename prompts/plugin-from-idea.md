@@ -89,8 +89,12 @@ smoothing_ms = 20                # float only: 0 = no smoothing; ~150-300 for de
 description  = "Tooltip text."   # optional but recommended
 # choices    = ["Soft", "Hard"]  # choice only
 # control    = "knob"            # optional, how it is drawn (first value is the default):
-                                 #   float/int: "knob", "small-knob", "large-knob", "slider"
-                                 #   bool: "toggle", "button";  choice: "dropdown", "buttons"
+                                 #   float/int: "knob", "small-knob", "large-knob", "slider" (horizontal),
+                                 #     "vslider" (fader), "number" (draggable number box);
+                                 #     int also "selector" (rotary switch, 2-12 steps)
+                                 #   bool: "toggle", "button", "led", "footswitch", "lever", "checkbox"
+                                 #   choice: "dropdown", "buttons" (row), "radio" (list), "selector" (2-12);
+                                 #     with exactly 2 options also the bool controls (on = the second one)
 # knob_style = "vintage"         # optional, knob controls only: overrides [ui].knob_style for this one
 # x = 50                         # layout = "free": top-left of the control, in window pixels (required)
 # y = 92

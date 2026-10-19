@@ -1,0 +1,122 @@
+# Classic orange-box style four-stage phaser: four first-order allpass stages swept together by a
+# triangle LFO with a JFET-like curve, summed 50/50 with the dry signal for two deep moving notches.
+# "Script" = original circuit without feedback; "Block" = later version with regeneration.
+
+[plugin]
+id          = "phase-four"
+name        = "Phase Four"
+brand       = "Plugin Cookbook"
+brand_id    = "Ckbk"
+unique_id   = "Phs4"
+version     = "1.0.0"
+description = "Four-stage vintage phaser with one speed knob and Script/Block voicings."
+license     = "MIT"
+category    = "phaser"
+inputs      = 1
+outputs     = 1
+
+[ui]
+accent  = "#F26A1B"
+columns = 3
+
+[[param]]
+symbol      = "speed"
+name        = "Speed"
+min         = 0.1
+max         = 10.0
+default     = 0.6
+unit        = "Hz"
+scale       = "log"
+description = "Sweep rate. Low = slow swoosh, high = wobbly vibrato-like phasing."
+
+[[param]]
+symbol      = "mode"
+name        = "Mode"
+type        = "choice"
+choices     = ["Script", "Block"]
+default     = "Script"
+description = "Script: original, no feedback (smooth, subtle). Block: feedback for a more pronounced, vocal sweep."
+
+[[param]]
+symbol      = "level"
+name        = "Level"
+min         = -12.0
+max         = 6.0
+default     = 0.0
+unit        = "dB"
+description = "Output level."
+
+[dsp]
+code = '''
+class Kernel {
+public:
+    void prepare(double sampleRate, uint32_t maxBlockSize)
+    {
+        sr_ = sampleRate;
+        piOverSr_ = (float)(kPi / sampleRate);
+        fbSmooth_.setup(sampleRate, 30.0);
+        reset();
+    }
+
+    void reset()
+    {
+        for (float& s : state_)
+            s = 0.f;
+        wetPrev_ = 0.f;
+        phase_ = 0.f;
+        fbSmooth_.setImmediate(0.f);
+    }
+
+    void process(const float* const* in, float* const* out, uint32_t frames, const Params& p)
+    {
+        // Block voicing: regeneration around the allpass chain. Allpass gain is 1, so loop gain = fb < 1.
+        fbSmooth_.setTarget(p.mode == 1 ? kBlockFeedback : 0.f);
+        const float invSr = (float)(1.0 / sr_);
+
+        for (uint32_t i = 0; i < frames; ++i)
+        {
+            // Triangle LFO in [0, 1].
+            const float tri = phase_ < 0.5f ? 2.f * phase_ : 2.f - 2.f * phase_;
+            phase_ += p.speed[i] * invSr;
+            if (phase_ >= 1.f)
+                phase_ -= 1.f;
+
+            // JFET-ish curve: lingers in the low part of the sweep, rushes through the top.
+            const float shaped = tri * (0.35f + 0.65f * tri);
+            const float fc = expMap(shaped, kFcLow, kFcHigh);
+
+            // First-order allpass coefficient (bilinear): H(z) = (a + z^-1) / (1 + a z^-1).
+            const float g = std::tan(fc * piOverSr_);
+            const float a = (g - 1.f) / (g + 1.f);
+
+            const float x = in[0][i];
+            const float fb = fbSmooth_.next();
+            float v = x + fb * wetPrev_;
+
+            for (float& s : state_)
+            {
+                const float y = a * v + s;
+                s = v - a * y;
+                v = y;
+            }
+            wetPrev_ = fastTanh(v); // keeps the regeneration path bounded on hot input
+
+            // Equal dry + wet: in-phase regions sum to unity, 180-degree points cancel into notches.
+            const float y = 0.5f * (x + v);
+            out[0][i] = y * dbToGain(p.level[i]);
+        }
+    }
+
+private:
+    static constexpr float kFcLow = 120.f;     // allpass break frequency range (Hz);
+    static constexpr float kFcHigh = 2200.f;   // notches sit at ~0.41x and ~2.41x of it
+    static constexpr float kBlockFeedback = 0.42f;
+
+    double sr_ = 48000.0;
+    float piOverSr_ = 0.f;
+    std::array<float, 4> state_ {};
+    float wetPrev_ = 0.f;
+    float phase_ = 0.f;
+    Smoothed fbSmooth_;
+};
+'''

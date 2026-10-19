@@ -60,6 +60,29 @@ python3 tools/recipe.py install                  # copy into this user's plugin 
 `build` accepts recipe names (`build my-effect`), `--formats vst3,clap` and `--no-ui`. Plain CMake works
 too: `cmake -S . -B build && cmake --build build`.
 
+### Plugin Studio — the whole loop in one window
+
+With the local build requirements installed (Path B), run:
+
+```sh
+python3 tools/recipe.py studio
+```
+
+A page opens in your browser (served only to this machine). Describe the effect in the chat; the AI
+proposes the controls, and once you confirm, the recipe appears in the editor, is saved to `plugins/` and
+tested automatically. **Build**, **Install** and **Open app** are one click each, with the output shown
+live. If a test or the build fails, **Fix with AI** sends the log back; compiler errors are clickable and
+jump to the line in the recipe. You can also edit the recipe by hand, or start from an example.
+
+The AI runs through either:
+
+- **Claude Code**, if `claude` is installed and signed in — uses your Claude subscription, no API key.
+  `STUDIO_CLAUDE_MODEL=opus` picks the model.
+- **The Claude API** — `pip install anthropic` and set `ANTHROPIC_API_KEY` (pay per use; uses
+  `claude-opus-5-5`).
+
+Pick one in the *AI* menu, or leave it on *Automatic* (Claude Code first).
+
 ### The standalone app
 
 Every recipe also builds as a standalone app (`<id>.app` on macOS, `<id>.exe` on Windows, `<id>` on
@@ -125,7 +148,8 @@ framework/src/
     CookbookPlugin.cpp   generic DPF plugin wrapper
     CookbookUI.cpp       plugin editor: connects the shared controls to the host
     CookbookStandalone.cpp  standalone app: Engine + RtAudio + audio settings panel
-tools/recipe.py          validate / generate / test / render / build / install
+tools/recipe.py          validate / generate / test / render / build / install / studio
+tools/studio/            Plugin Studio: local web app (chat + editor + test/build buttons)
 tools/harness/           offline test harness
 dpf/, dpf-widgets/       git submodules (DISTRHO Plugin Framework and its widgets)
 .github/workflows/       CI: tests + Linux, macOS (universal) and Windows builds

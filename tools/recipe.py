@@ -10,6 +10,7 @@ Turn *.plugin.toml recipes into DPF plugin sources, test them offline, and build
     python3 tools/recipe.py render RECIPE IN.wav OUT.wav [--set sym=value ...]
     python3 tools/recipe.py build [RECIPE ...]         build VST3 / CLAP / AU / LV2 / standalone with CMake
     python3 tools/recipe.py install                    copy built plugins to this user's plugin folders
+    python3 tools/recipe.py studio                     open Plugin Studio (chat with an AI, test, build) in the browser
     python3 tools/recipe.py generate --all --out DIR   (used by CMake) emit generated sources
 
 Requires Python 3.11+ (for tomllib) or the `tomli` package.
@@ -1041,6 +1042,13 @@ def cmd_install(args) -> int:
     return 0
 
 
+def cmd_studio(args) -> int:
+    sys.path.insert(0, str(ROOT / "tools" / "studio"))
+    import server  # type: ignore
+
+    return server.serve(args.port, not args.no_browser)
+
+
 TEMPLATE = '''# Plugin Cookbook recipe — see prompts/plugin-from-idea.md for the full format.
 
 [plugin]
@@ -1124,6 +1132,11 @@ def main() -> int:
 
     p = sub.add_parser("install", help="copy built plugins to this user's plugin folders")
     p.set_defaults(func=cmd_install)
+
+    p = sub.add_parser("studio", help="open Plugin Studio in the browser")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--no-browser", action="store_true")
+    p.set_defaults(func=cmd_studio)
 
     args = ap.parse_args()
     try:

@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plugin Studio</title>
+<style>
+  :root {
+    --bg: #17181b;
+    --panel: #1e1f23;
+    --raised: #24262b;
+    --line: #34373d;
+    --text: #e8e6e1;
+    --muted: #8a8d93;
+    --accent: #f26a1b;
+    --accent-soft: rgba(242, 106, 27, 0.16);
+    --ok: #57ab5a;
+    --warn: #d4a72c;
+    --bad: #e5534b;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: grid; grid-template-rows: 48px 1fr;
+  }
+  button, select, textarea, input { font: inherit; color: inherit; }
+  button {
+    background: var(--raised); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 12px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { border-color: #4a4e56; background: #2b2d33; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #17181b; font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: #ff7a2e; border-color: #ff7a2e; }
+  button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+  button.ghost:hover:not(:disabled) { color: var(--text); background: var(--raised); }
+  select { background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 0 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: 0.01em; }
+  header h1 span { color: var(--accent); }
+  header .spacer { flex: 1; }
+  header label { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+
+  main {
+    display: grid; min-height: 0;
+    grid-template-columns: 210px minmax(300px, 1fr) minmax(380px, 1.25fr);
+  }
+  section { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+  section + section { border-left: 1px solid var(--line); }
+  .head {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px; min-height: 42px;
+    border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .head .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .head .title b { color: var(--text); text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 600; }
+
+  /* recipes */
+  #recipes { overflow: auto; padding: 8px; flex: 1; }
+  #recipes h2 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 12px 6px 4px; }
+  #recipes h2:first-child { margin-top: 2px; }
+  .recipe {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    background: transparent; border: 1px solid transparent; padding: 6px 8px; border-radius: 6px;
+  }
+  .recipe .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .recipe .tag { font-size: 11px; color: var(--muted); }
+  .recipe.active { background: var(--accent-soft); border-color: rgba(242, 106, 27, 0.4); }
+  #newBtn { margin: 8px; }
+
+  /* chat */
+  #chat { flex: 1; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 92%; padding: 9px 12px; border-radius: 10px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { align-self: flex-end; background: #2c2f36; }
+  .msg.assistant { align-self: flex-start; background: var(--raised); border: 1px solid var(--line); }
+  .msg.error { align-self: stretch; background: rgba(229, 83, 75, 0.12); border: 1px solid rgba(229, 83, 75, 0.45); }
+  .msg pre { background: #121315; border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow: auto; font: 12px/1.4 var(--mono); white-space: pre; margin: 6px 0; }
+  .msg code { font: 12.5px var(--mono); background: #121315; padding: 1px 4px; border-radius: 4px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; margin: 4px 0;
+    border-radius: 999px; background: var(--accent-soft); color: #ffb385; font-size: 12.5px; white-space: nowrap;
+  }
+  .empty { color: var(--muted); margin: auto; text-align: center; max-width: 360px; white-space: normal; }
+  .empty b { color: var(--text); }
+  .examples { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 12px; }
+  .examples button { font-size: 12.5px; border-radius: 999px; }
+  #composer { border-top: 1px solid var(--line); padding: 10px; display: flex; gap: 8px; align-items: flex-end; }
+  #prompt {
+    flex: 1; resize: none; min-height: 40px; max-height: 180px; padding: 9px 10px;
+    background: var(--raised); border: 1px solid var(--line); border-radius: 8px; outline: none;
+  }
+  #prompt:focus { border-color: #4a4e56; }
+
+  /* editor + output */
+  #right { display: grid; grid-template-rows: auto minmax(120px, 1fr) auto minmax(110px, 38%); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); align-items: center; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .pos { color: var(--muted); font: 12px var(--mono); }
+  #editor {
+    width: 100%; height: 100%; resize: none; border: 0; outline: none; padding: 12px 14px;
+    background: #141518; font: 12.5px/1.5 var(--mono); tab-size: 4; white-space: pre; overflow: auto;
+  }
+  #editor::placeholder { color: #5d6067; }
+  .outhead { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--panel); min-height: 38px; }
+  .outhead .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .outhead .spacer { flex: 1; }
+  .badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--raised); color: var(--muted); }
+  .badge.ok { color: var(--ok); } .badge.warn { color: var(--warn); } .badge.bad { color: var(--bad); }
+  #output { overflow: auto; padding: 8px 12px; font: 12px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; background: #121315; }
+  #output .l-pass { color: var(--ok); }
+  #output .l-warn { color: var(--warn); }
+  #output .l-fail { color: var(--bad); }
+  #output .l-cmd { color: var(--muted); }
+  #output .l-link { text-decoration: underline dotted; cursor: pointer; }
+  .spin { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: s 0.8s linear infinite; display: inline-block; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  .hidden { display: none !important; }
+
+  @media (max-width: 900px) {
+    body { grid-template-rows: auto 1fr; }
+    header { flex-wrap: wrap; padding: 8px 16px; }
+    main { grid-template-columns: 1fr; grid-auto-rows: auto; overflow: auto; }
+    section { min-height: auto; }
+    section + section { border-left: 0; border-top: 1px solid var(--line); }
+    #recipes { max-height: 180px; flex: none; }
+    main > section:nth-child(2) { height: 75vh; min-height: 420px; }
+    #right { grid-template-rows: auto 360px auto 240px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Plugin <span>Studio</span></h1>
+  <div class="spacer"></div>
+  <label>AI
+    <select id="backend">
+      <option value="auto">Automatic</option>
+      <option value="claude">Claude Code</option>
+      <option value="api">Claude API</option>
+    </select>
+  </label>
+</header>
+
+<main>
+  <section>
+    <div class="head"><span class="title">Plugins</span></div>
+    <div id="recipes"></div>
+    <button id="newBtn" class="primary">+ New plugin</button>
+  </section>
+
+  <section>
+    <div class="head"><span class="title" id="chatTitle">Chat</span><button class="ghost" id="clearChat" title="Start this conversation over">Clear</button></div>
+    <div id="chat"></div>
+    <form id="composer">
+      <textarea id="prompt" rows="1" placeholder="Describe an effect, or ask for a change…"></textarea>
+      <button class="primary" id="send" type="submit">Send</button>
+      <button id="stopAi" type="button" class="hidden">Stop</button>
+    </form>
+  </section>
+
+  <section id="right">
+    <div class="toolbar">
+      <button id="saveBtn" title="Save (Cmd/Ctrl+S)">Save</button>
+      <button id="testBtn" title="Compile the DSP and run the test suite">Test</button>
+      <button id="buildBtn" title="Build VST3, AU, CLAP, LV2 and the standalone app">Build</button>
+      <button id="installBtn" title="Copy the built plugins into your plugin folders">Install</button>
+      <button id="openBtn" title="Open the standalone app">Open app</button>
+      <div class="spacer"></div>
+      <span class="pos" id="pos"></span>
+    </div>
+    <textarea id="editor" spellcheck="false" placeholder="The recipe (.plugin.toml) appears here. Describe a plugin in the chat, or pick one on the left."></textarea>
+    <div class="outhead">
+      <span class="label" id="outLabel">Output</span>
+      <span class="spin hidden" id="outSpin"></span>
+      <span class="badge ok hidden" id="bPass"></span>
+      <span class="badge warn hidden" id="bWarn"></span>
+      <span class="badge bad hidden" id="bFail"></span>
+      <div class="spacer"></div>
+      <button id="fixBtn" class="primary hidden">Fix with AI</button>
+      <button id="cancelBtn" class="hidden">Cancel</button>
+    </div>
+    <div id="output"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const TOKEN = "__STUDIO_TOKEN__";
+const $ = (id) => document.getElementById(id);
+
+const state = {
+  recipes: [],
+  backends: {},
+  current: null,        // { id, source } or null for a new plugin
+  savedText: "",
+  chats: loadChats(),   // { key: [{role, content}] }
+  aiJob: null,
+  toolJob: null,
+  lastTest: null,       // { id, ok, lines }
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// storage (per-browser convenience only)
+
+function loadChats() {
+  try { return JSON.parse(localStorage.getItem("studio.chats") || "{}"); } catch { return {}; }
+}
+function saveChats() {
+  try { localStorage.setItem("studio.chats", JSON.stringify(state.chats)); } catch {}
+}
+function pref(key, value) {
+  try {
+    if (value === undefined) return localStorage.getItem("studio." + key);
+    localStorage.setItem("studio." + key, value);
+  } catch {}
+  return null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// API
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "X-Studio-Token": TOKEN, "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function follow(jobId, onEvent) {
+  return new Promise((resolve) => {
+    const es = new EventSource(`/api/events/${jobId}?token=${encodeURIComponent(TOKEN)}`);
+    es.onmessage = (m) => {
+      const ev = JSON.parse(m.data);
+      onEvent(ev);
+      if (ev.type === "done") { es.close(); resolve(ev); }
+    };
+    es.onerror = () => { es.close(); resolve({ type: "done", ok: false, lost: true }); };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// recipes list
+
+async function refresh() {
+  const s = await api("/api/state");
+  state.recipes = s.recipes;
+  state.backends = s.backends;
+  renderBackends();
+  renderRecipes();
+  renderButtons();
+}
+
+function renderBackends() {
+  const sel = $("backend");
+  const labels = { claude: "Claude Code", api: "Claude API" };
+  for (const opt of sel.options) {
+    if (opt.value === "auto") continue;
+    const b = state.backends[opt.value] || {};
+    opt.disabled = !b.available;
+    opt.textContent = labels[opt.value] + (b.available ? "" : ` (${b.hint})`);
+  }
+  const saved = pref("backend");
+  if (saved && [...sel.options].some((o) => o.value === saved && !o.disabled)) sel.value = saved;
+}
+
+function renderRecipes() {
+  const box = $("recipes");
+  box.textContent = "";
+  for (const [source, label] of [["plugins", "Your plugins"], ["examples", "Examples"]]) {
+    const items = state.recipes.filter((r) => r.source === source);
+    if (!items.length) continue;
+    const h = document.createElement("h2");
+    h.textContent = label;
+    box.appendChild(h);
+    for (const r of items) {
+      const b = document.createElement("button");
+      b.className = "recipe" + (state.current && state.current.id === r.id && state.current.source === source ? " active" : "");
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = r.name;
+      b.appendChild(name);
+      if (r.app) {
+        const t = document.createElement("span");
+        t.className = "tag";
+        t.textContent = "built";
+        b.appendChild(t);
+      }
+      b.onclick = () => selectRecipe(r.id);
+      box.appendChild(b);
+    }
+  }
+}
+
+function dirty() { return $("editor").value !== state.savedText; }
+
+function confirmDiscard() {
+  return !dirty() || confirm("The recipe has unsaved changes. Discard them?");
+}
+
+async function selectRecipe(id) {
+  if (state.current && state.current.id === id && !dirty()) return;
+  if (!confirmDiscard()) return;
+  const r = await api(`/api/recipe?id=${encodeURIComponent(id)}`);
+  state.current = { id: r.id, source: r.source };
+  setEditor(r.text, true);
+  clearOutput();
+  renderRecipes();
+  renderChat();
+  renderButtons();
+}
+
+function newPlugin() {
+  if (!confirmDiscard()) return;
+  state.current = null;
+  state.chats["__new__"] = [];
+  saveChats();
+  setEditor("", true);
+  clearOutput();
+  renderRecipes();
+  renderChat();
+  renderButtons();
+  $("prompt").focus();
+}
+
+function setEditor(text, saved) {
+  $("editor").value = text;
+  $("editor").setSelectionRange(0, 0);
+  $("editor").scrollTop = 0;
+  if (saved) state.savedText = text;
+  updatePos();
+  renderButtons();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// buttons
+
+function renderButtons() {
+  const busy = !!state.toolJob;
+  const hasText = $("editor").value.trim().length > 0;
+  const id = state.current && state.current.id;
+  const rec = id && state.recipes.find((r) => r.id === id);
+  $("saveBtn").disabled = busy || !hasText || !dirty();
+  $("saveBtn").textContent = state.current && state.current.source === "examples" && dirty() ? "Save as my plugin" : "Save";
+  $("testBtn").disabled = busy || !hasText;
+  $("buildBtn").disabled = busy || !hasText;
+  $("installBtn").disabled = busy || !rec || !rec.app;
+  $("openBtn").disabled = busy || !rec || !rec.app;
+  $("cancelBtn").classList.toggle("hidden", !busy);
+  $("outSpin").classList.toggle("hidden", !busy);
+  const aiBusy = !!state.aiJob;
+  $("send").classList.toggle("hidden", aiBusy);
+  $("stopAi").classList.toggle("hidden", !aiBusy);
+  $("chatTitle").innerHTML = "";
+  const t = document.createElement("b");
+  t.textContent = rec ? rec.name : "New plugin";
+  $("chatTitle").append("Chat · ", t);
+}
+
+// Saves the editor into plugins/<id>.plugin.toml; returns the id or null.
+async function save() {
+  const text = $("editor").value;
+  try {
+    const r = await api("/api/recipe", { text });
+    const oldKey = chatKey();
+    state.current = { id: r.id, source: "plugins" };
+    state.savedText = text;
+    updatePos();
+    if (oldKey !== r.id && state.chats[oldKey] && state.chats[oldKey].length) {
+      // the conversation follows the plugin it produced
+      state.chats[r.id] = state.chats[oldKey];
+      if (oldKey === "__new__") state.chats["__new__"] = [];
+      saveChats();
+    }
+    await refresh();
+    renderChat();
+    return r.id;
+  } catch (e) {
+    clearOutput();
+    showOutputLine("ERROR " + e.message);
+    return null;
+  }
+}
+
+async function runTool(kind) {
+  if (state.toolJob) return;
+  let id = state.current && state.current.id;
+  if (["test", "build"].includes(kind) && (dirty() || !state.current || state.current.source !== "plugins")) {
+    id = await save();
+    if (!id) return;
+  }
+  clearOutput();
+  const titles = { test: "Testing", build: "Building", install: "Installing", open: "Opening", check: "Checking" };
+  $("outLabel").textContent = titles[kind] || kind;
+  const { job } = await api("/api/run", { kind, id });
+  state.toolJob = job;
+  renderButtons();
+  const lines = [];
+  const done = await follow(job, (ev) => {
+    if (ev.type === "line") { lines.push(ev.text); showOutputLine(ev.text); }
+  });
+  state.toolJob = null;
+  $("outLabel").textContent = (titles[kind] || kind) + (done.cancelled ? ": cancelled" : done.ok ? ": done" : ": failed");
+  if (kind === "test") {
+    state.lastTest = { id, ok: done.ok, lines };
+    $("fixBtn").classList.toggle("hidden", done.ok || done.cancelled);
+  }
+  if (kind === "build" && !done.ok && !done.cancelled) {
+    state.lastTest = { id, ok: false, lines };
+    $("fixBtn").classList.remove("hidden");
+  }
+  if (kind === "build" || kind === "install") await refresh();
+  renderButtons();
+  return done.ok;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// output
+
+const counts = { pass: 0, warn: 0, fail: 0 };
+
+function clearOutput() {
+  $("output").textContent = "";
+  counts.pass = counts.warn = counts.fail = 0;
+  updateBadges();
+  $("fixBtn").classList.add("hidden");
+  $("outLabel").textContent = "Output";
+}
+
+function showOutputLine(text) {
+  const out = $("output");
+  const stick = out.scrollTop + out.clientHeight >= out.scrollHeight - 30;
+  const div = document.createElement("div");
+  if (/^\s*PASS\b/.test(text)) { div.className = "l-pass"; counts.pass++; }
+  else if (/^\s*WARN\b/.test(text)) { div.className = "l-warn"; counts.warn++; }
+  else if (/^\s*(FAIL|ERROR)\b/.test(text) || /\berror:/.test(text)) { div.className = "l-fail"; if (/^\s*FAIL\b/.test(text)) counts.fail++; }
+  else if (text.startsWith("$ ")) div.className = "l-cmd";
+  // compiler errors point at lines inside the recipe: click to jump there
+  const m = text.match(/\.plugin\.toml:(\d+)(?::(\d+))?/);
+  if (m) {
+    div.classList.add("l-link");
+    div.title = "Show this line in the recipe";
+    div.onclick = () => gotoLine(parseInt(m[1], 10));
+  }
+  div.textContent = text;
+  out.appendChild(div);
+  updateBadges();
+  if (stick) out.scrollTop = out.scrollHeight;
+}
+
+function updateBadges() {
+  for (const [key, el, word] of [["pass", "bPass", "pass"], ["warn", "bWarn", "warn"], ["fail", "bFail", "fail"]]) {
+    $(el).textContent = `${counts[key]} ${word}`;
+    $(el).classList.toggle("hidden", counts[key] === 0);
+  }
+}
+
+function gotoLine(n) {
+  const ed = $("editor");
+  const lines = ed.value.split("\n");
+  let start = 0;
+  for (let i = 0; i < Math.min(n - 1, lines.length); i++) start += lines[i].length + 1;
+  const end = start + (lines[n - 1] || "").length;
+  ed.focus();
+  ed.setSelectionRange(start, end);
+  const lh = parseFloat(getComputedStyle(ed).lineHeight) || 18;
+  ed.scrollTop = Math.max(0, (n - 5) * lh);
+  updatePos();
+}
+
+function updatePos() {
+  const ed = $("editor");
+  const before = ed.value.slice(0, ed.selectionStart);
+  const line = before.split("\n").length;
+  const col = before.length - before.lastIndexOf("\n");
+  $("pos").textContent = ed.value ? `Ln ${line}, Col ${col}` + (dirty() ? " · edited" : "") : "";
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// chat
+
+function chatKey() { return state.current ? state.current.id : "__new__"; }
+function chat() { return (state.chats[chatKey()] ||= []); }
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// Minimal markdown: fenced code, inline code, bold. A toml recipe block collapses into a chip,
+// since the recipe itself goes to the editor.
+function renderMarkdown(text, streaming) {
+  const parts = [];
+  const re = /```(\w*)\n?([\s\S]*?)(```|$)/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    parts.push(inline(text.slice(last, m.index)));
+    const closed = m[3] === "```";
+    if (m[1] === "toml" || /^\s*\[plugin\]/.test(m[2])) {
+      const n = m[2].split("\n").length;
+      parts.push(`<span class="chip">${closed || !streaming ? "Recipe → editor" : `Writing recipe… ${n} lines`}</span>`);
+    } else {
+      parts.push(`<pre>${escapeHtml(m[2])}</pre>`);
+    }
+    last = re.lastIndex;
+    if (!closed) break;
+  }
+  parts.push(inline(text.slice(last)));
+  return parts.join("").replace(/^\s+|\s+$/g, "");
+}
+function inline(s) {
+  return escapeHtml(s)
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+}
+
+function bubble(role, html) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.innerHTML = html;
+  $("chat").appendChild(div);
+  $("chat").scrollTop = $("chat").scrollHeight;
+  return div;
+}
+
+function renderChat() {
+  const box = $("chat");
+  box.textContent = "";
+  const msgs = chat();
+  if (!msgs.length) {
+    const div = document.createElement("div");
+    div.className = "empty";
+    const anyAi = Object.values(state.backends).some((b) => b.available);
+    div.innerHTML = state.current
+      ? `Ask for a change to <b>${escapeHtml(state.current.id)}</b>: a new control, a different sound, a fix.`
+      : `<b>Describe the effect you want.</b><br>The AI proposes the controls; confirm, and the recipe appears on the right and is tested automatically.`;
+    if (!anyAi) {
+      div.innerHTML += `<br><br>No AI is set up yet: sign in to Claude Code (<code>claude auth login</code>), or set <code>ANTHROPIC_API_KEY</code> and run <code>pip install anthropic</code>, then restart the studio.`;
+    }
+    if (!state.current) {
+      const ex = document.createElement("div");
+      ex.className = "examples";
+      for (const idea of ["A tape saturation with drive, tone and output", "A slow stereo tremolo", "A ping-pong delay that gets darker on every repeat"]) {
+        const b = document.createElement("button");
+        b.textContent = idea;
+        b.onclick = () => { $("prompt").value = idea; autoGrow(); $("prompt").focus(); };
+        ex.appendChild(b);
+      }
+      div.appendChild(ex);
+    }
+    box.appendChild(div);
+    return;
+  }
+  for (const m of msgs) {
+    if (m.role === "user") bubble("user", m.display ? inline(m.display) : renderMarkdown(m.content, false));
+    else bubble("assistant", renderMarkdown(m.content, false));
+  }
+}
+
+async function sendMessage(content, display) {
+  if (state.aiJob || !content.trim()) return;
+  const key = chatKey();
+  const msgs = chat();
+  if (!msgs.length) $("chat").textContent = "";
+  msgs.push({ role: "user", content, ...(display ? { display } : {}) });
+  saveChats();
+  const userBubble = bubble("user", display ? inline(display) : renderMarkdown(content, false));
+
+  const out = bubble("assistant", '<span class="spin"></span>');
+  let text = "";
+  let job;
+  try {
+    ({ job } = await api("/api/ai", {
+      messages: msgs.map(({ role, content }) => ({ role, content })),
+      recipe: $("editor").value,
+      backend: $("backend").value,
+    }));
+  } catch (e) {
+    out.remove();
+    userBubble.remove();
+    msgs.pop();
+    saveChats();
+    bubble("error", escapeHtml(e.message));
+    return;
+  }
+  state.aiJob = job;
+  renderButtons();
+  const errors = [];
+  const done = await follow(job, (ev) => {
+    if (ev.type === "delta") {
+      text += ev.text;
+      out.innerHTML = renderMarkdown(text, true);
+      $("chat").scrollTop = $("chat").scrollHeight;
+    } else if (ev.type === "error") {
+      errors.push(ev.text);
+    }
+  });
+  state.aiJob = null;
+  renderButtons();
+
+  const final = done.text || text;
+  if (!done.ok || !final.trim()) {
+    out.remove();
+    userBubble.remove();
+    msgs.pop(); // let the user resend
+    saveChats();
+    if (done.cancelled) return;
+    const why = errors.join("\n") ||
+      (done.lost ? "Lost the connection to the studio server (was it restarted?). Send the message again." : "The AI did not answer.");
+    bubble("error", escapeHtml(why));
+    $("prompt").value = display ? $("prompt").value : content;
+    return;
+  }
+  out.innerHTML = renderMarkdown(final, false);
+  (state.chats[key] ||= msgs).push({ role: "assistant", content: final });
+  saveChats();
+
+  const recipe = extractRecipe(final);
+  if (recipe && key === chatKey()) {
+    setEditor(recipe, false);
+    const id = await save();
+    if (id) await runTool("test");
+  }
+}
+
+function extractRecipe(text) {
+  const blocks = [...text.matchAll(/```toml\s*\n([\s\S]*?)```/g)].map((m) => m[1]);
+  const recipe = blocks.reverse().find((b) => /^\s*\[plugin\]/m.test(b));
+  return recipe ? recipe.replace(/\s+$/, "") + "\n" : null;
+}
+
+function fixWithAi() {
+  const t = state.lastTest;
+  if (!t) return;
+  const relevant = t.lines.filter((l) => !l.startsWith("$ "));
+  const tail = relevant.slice(-150).join("\n");
+  sendMessage("The test run failed. Output:\n```\n" + tail + "\n```\nFix the recipe and resend the whole file.",
+              "Fix the problems from the last test run");
+}
+
+function autoGrow() {
+  const p = $("prompt");
+  p.style.height = "auto";
+  p.style.height = Math.min(p.scrollHeight, 180) + "px";
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// wiring
+
+$("composer").onsubmit = (e) => {
+  e.preventDefault();
+  const text = $("prompt").value;
+  $("prompt").value = "";
+  autoGrow();
+  sendMessage(text);
+};
+$("prompt").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("composer").requestSubmit(); }
+});
+$("prompt").addEventListener("input", autoGrow);
+$("stopAi").onclick = () => state.aiJob && api(`/api/cancel/${state.aiJob}`, {});
+$("cancelBtn").onclick = () => state.toolJob && api(`/api/cancel/${state.toolJob}`, {});
+$("clearChat").onclick = () => {
+  if (!chat().length || confirm("Clear this conversation?")) { state.chats[chatKey()] = []; saveChats(); renderChat(); }
+};
+$("newBtn").onclick = newPlugin;
+$("saveBtn").onclick = save;
+$("testBtn").onclick = () => runTool("test");
+$("buildBtn").onclick = () => runTool("build");
+$("installBtn").onclick = () => runTool("install");
+$("openBtn").onclick = () => runTool("open");
+$("fixBtn").onclick = fixWithAi;
+$("backend").onchange = () => pref("backend", $("backend").value);
+
+const ed = $("editor");
+ed.addEventListener("input", () => { updatePos(); renderButtons(); });
+ed.addEventListener("click", updatePos);
+ed.addEventListener("keyup", updatePos);
+ed.addEventListener("keydown", (e) => {
+  if (e.key === "Tab" && !e.shiftKey) {
+    e.preventDefault();
+    ed.setRangeText("    ", ed.selectionStart, ed.selectionEnd, "end");
+    ed.dispatchEvent(new Event("input"));
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); if (!$("saveBtn").disabled) save(); }
+});
+window.addEventListener("beforeunload", (e) => { if (dirty()) e.preventDefault(); });
+
+refresh().then(() => {
+  const mine = state.recipes.filter((r) => r.source === "plugins");
+  if (mine.length) selectRecipe(mine[0].id);
+  else { renderChat(); renderButtons(); }
+}).catch((e) => bubble("error", "Could not reach the studio server: " + escapeHtml(e.message)));
+</script>
+</body>
+</html>

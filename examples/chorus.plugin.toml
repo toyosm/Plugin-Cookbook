@@ -1,0 +1,108 @@
+# Stereo chorus from a mono input: one modulated delay line read with two LFO phases.
+# Demonstrates: mono-in/stereo-out, DelayLine with Hermite interpolation, LFO phase handled in the kernel,
+# allocation sized from the sample rate in prepare().
+
+[plugin]
+id          = "chorus"
+name        = "Chorus"
+brand       = "Plugin Cookbook"
+brand_id    = "Ckbk"
+unique_id   = "Chrs"
+version     = "1.0.0"
+description = "Lush stereo chorus for mono sources."
+license     = "MIT"
+category    = "chorus"
+inputs      = 1
+outputs     = 2
+
+[ui]
+accent = "#5FA8D3"
+
+[[param]]
+symbol      = "rate"
+name        = "Rate"
+min         = 0.05
+max         = 5.0
+default     = 0.8
+unit        = "Hz"
+scale       = "log"
+description = "LFO speed."
+
+[[param]]
+symbol      = "depth"
+name        = "Depth"
+min         = 0.0
+max         = 100.0
+default     = 50.0
+unit        = "%"
+description = "Amount of delay modulation (up to +/- 5 ms)."
+
+[[param]]
+symbol      = "width"
+name        = "Width"
+min         = 0.0
+max         = 100.0
+default     = 100.0
+unit        = "%"
+description = "Phase offset between left and right (0 = mono, 100 = 90 degrees)."
+
+[[param]]
+symbol      = "mix"
+name        = "Mix"
+min         = 0.0
+max         = 100.0
+default     = 50.0
+unit        = "%"
+description = "Dry/wet balance. 100% gives pure vibrato."
+
+[dsp]
+code = '''
+class Kernel {
+public:
+    void prepare(double sampleRate, uint32_t maxBlockSize)
+    {
+        sr_ = sampleRate;
+        delay_.allocate((size_t)(sampleRate * 0.030) + 8); // 30 ms is plenty for 12 +/- 5 ms
+        wetTone_[0].setCutoff(9000.f, sr_);
+        wetTone_[1].setCutoff(9000.f, sr_);
+    }
+
+    void reset()
+    {
+        delay_.clear();
+        phase_ = 0.f;
+        wetTone_[0].reset();
+        wetTone_[1].reset();
+    }
+
+    void process(const float* const* in, float* const* out, uint32_t frames, const Params& p)
+    {
+        const float msToSamples = (float)(sr_ * 0.001);
+        for (uint32_t i = 0; i < frames; ++i)
+        {
+            const float x = in[0][i];
+            delay_.push(x);
+
+            const float lfoL = std::sin(kTwoPi * phase_);
+            const float lfoR = std::sin(kTwoPi * (phase_ + 0.25f * p.width[i] * 0.01f));
+            phase_ += p.rate[i] / (float)sr_;
+            if (phase_ >= 1.f)
+                phase_ -= 1.f;
+
+            const float depthMs = 5.f * p.depth[i] * 0.01f;
+            const float wetL = wetTone_[0].process(delay_.readHermite((12.f + depthMs * lfoL) * msToSamples));
+            const float wetR = wetTone_[1].process(delay_.readHermite((12.f + depthMs * lfoR) * msToSamples));
+
+            const float mix = p.mix[i] * 0.01f;
+            out[0][i] = x + mix * (wetL - x);
+            out[1][i] = x + mix * (wetR - x);
+        }
+    }
+
+private:
+    double sr_ = 48000.0;
+    DelayLine delay_;
+    OnePoleLowpass wetTone_[2];
+    float phase_ = 0.f;
+};
+'''

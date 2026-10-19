@@ -1,0 +1,109 @@
+# Stereo multimode filter (12 or 24 dB/oct).
+# Demonstrates: choice + bool parameters, log-scaled cutoff, per-channel state,
+# coefficient updates every 16 samples via a running counter (independent of host block size).
+
+[plugin]
+id          = "multimode-filter"
+name        = "Multimode Filter"
+brand       = "Plugin Cookbook"
+brand_id    = "Ckbk"
+unique_id   = "MmFl"
+version     = "1.0.0"
+description = "Low-pass, high-pass, band-pass and notch filter with optional 24 dB/oct slope."
+license     = "MIT"
+category    = "filter"
+inputs      = 2
+outputs     = 2
+
+[ui]
+accent = "#7BC47F"
+
+[[param]]
+symbol      = "mode"
+name        = "Mode"
+type        = "choice"
+choices     = ["Low-pass", "High-pass", "Band-pass", "Notch"]
+default     = "Low-pass"
+
+[[param]]
+symbol      = "cutoff"
+name        = "Cutoff"
+min         = 20.0
+max         = 20000.0
+default     = 1000.0
+unit        = "Hz"
+scale       = "log"
+smoothing_ms = 30
+description = "Filter frequency."
+
+[[param]]
+symbol      = "resonance"
+name        = "Resonance"
+short_name  = "Reso"
+min         = 0.5
+max         = 10.0
+default     = 0.707
+scale       = "log"
+description = "Filter Q. Higher values emphasize the cutoff frequency."
+
+[[param]]
+symbol      = "steep"
+name        = "24 dB/oct"
+type        = "bool"
+default     = false
+description = "Cascade a second stage for a steeper slope."
+
+[dsp]
+code = '''
+class Kernel {
+public:
+    void prepare(double sampleRate, uint32_t maxBlockSize) { sr_ = sampleRate; }
+
+    void reset()
+    {
+        for (int c = 0; c < 2; ++c)
+        {
+            stage1_[c].reset();
+            stage2_[c].reset();
+        }
+        counter_ = 0;
+        lastMode_ = -1;
+    }
+
+    void process(const float* const* in, float* const* out, uint32_t frames, const Params& p)
+    {
+        const Biquad::Type type = kTypes[p.mode];
+        const bool modeChanged = p.mode != lastMode_;
+        lastMode_ = p.mode;
+
+        for (uint32_t i = 0; i < frames; ++i)
+        {
+            if (counter_ == 0 || (modeChanged && i == 0))
+            {
+                for (int c = 0; c < 2; ++c)
+                {
+                    stage1_[c].set(type, sr_, p.cutoff[i], p.resonance[i]);
+                    stage2_[c].set(type, sr_, p.cutoff[i], 0.707f);
+                }
+            }
+            counter_ = (counter_ + 1) & 15;
+
+            for (int c = 0; c < 2; ++c)
+            {
+                float y = stage1_[c].process(in[c][i]);
+                if (p.steep)
+                    y = stage2_[c].process(y);
+                out[c][i] = y;
+            }
+        }
+    }
+
+private:
+    static constexpr Biquad::Type kTypes[4] = { Biquad::Lowpass, Biquad::Highpass, Biquad::Bandpass, Biquad::Notch };
+
+    double sr_ = 48000.0;
+    Biquad stage1_[2], stage2_[2];
+    uint32_t counter_ = 0;
+    int lastMode_ = -1;
+};
+'''

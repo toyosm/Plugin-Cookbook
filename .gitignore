@@ -1,0 +1,19 @@
+# local builds
+/build/
+# in-source builds (the CI action configures with `cmake .`)
+/bin/
+/generated/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.a
+lv2_ttl_generator
+/dgl/
+/dpf-plugin-*
+*.pkg
+*.dmg
+
+__pycache__/
+*.pyc
+.DS_Store

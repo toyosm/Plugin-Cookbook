@@ -1,0 +1,85 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # lets tagged builds publish a GitHub Release
+
+env:
+  NAME: plugin-cookbook # base name of release archives
+
+jobs:
+  # Fast feedback: validate every recipe and run the offline DSP test suite.
+  recipes:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check recipes
+        run: python3 tools/recipe.py check --all
+      - name: Test recipes
+        run: python3 tools/recipe.py test --all
+
+  linux:
+    needs: recipes
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: distrho/dpf-cmake-action@v1
+        with:
+          target: linux-x86_64
+
+  macos:
+    needs: recipes
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: distrho/dpf-cmake-action@v1
+        with:
+          target: macos-universal
+
+  windows:
+    needs: recipes
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: distrho/dpf-cmake-action@v1
+        with:
+          target: win64
+
+  # Loads every plugin in every format in real hosts/validators (Carla, lv2lint, valgrind...).
+  plugin-validation:
+    needs: recipes
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: distrho/dpf-cmake-action@v1
+        with:
+          target: pluginval

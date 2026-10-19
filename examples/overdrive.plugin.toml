@@ -1,0 +1,125 @@
+# Overdrive: pre-emphasis, 2x oversampled waveshaper with three clipping modes, tone filter, DC blocker.
+# Demonstrates: choice parameters, log-scaled frequency, Oversampler2x, latency reporting,
+# coefficient updates on a per-sample counter.
+
+[plugin]
+id          = "overdrive"
+name        = "Overdrive"
+brand       = "Plugin Cookbook"
+brand_id    = "Ckbk"
+unique_id   = "Ovdr"
+version     = "1.0.0"
+description = "Warm overdrive with soft, hard and asymmetric clipping."
+license     = "MIT"
+category    = "distortion"
+inputs      = 1
+outputs     = 1
+
+[ui]
+accent = "#E2703A"
+
+[[param]]
+symbol      = "drive"
+name        = "Drive"
+min         = 0.0
+max         = 100.0
+default     = 45.0
+unit        = "%"
+description = "Gain into the clipper (0 to +36 dB)."
+
+[[param]]
+symbol      = "tone"
+name        = "Tone"
+min         = 800.0
+max         = 12000.0
+default     = 4000.0
+unit        = "Hz"
+scale       = "log"
+description = "Cutoff of the post-clipping low-pass filter."
+
+[[param]]
+symbol      = "level"
+name        = "Level"
+min         = -24.0
+max         = 6.0
+default     = 0.0
+unit        = "dB"
+description = "Output level."
+
+[[param]]
+symbol      = "mode"
+name        = "Clipping"
+type        = "choice"
+choices     = ["Soft", "Hard", "Asymmetric"]
+default     = "Soft"
+description = "Soft: smooth tube-like. Hard: diode-like. Asymmetric: adds even harmonics."
+
+[dsp]
+code = '''
+class Kernel {
+public:
+    void prepare(double sampleRate, uint32_t maxBlockSize)
+    {
+        sr_ = sampleRate;
+        driven_.assign(maxBlockSize, 0.f);
+        up_.assign(2 * maxBlockSize, 0.f);
+        os_.allocate(maxBlockSize);
+        preHp_.setCutoff(300.f, sr_);
+        dc_.setup(sr_);
+    }
+
+    void reset()
+    {
+        os_.reset();
+        preHp_.reset();
+        tone_.reset();
+        dc_.reset();
+        counter_ = 0;
+    }
+
+    uint32_t latency() const { return Oversampler2x::latency(); }
+
+    void process(const float* const* in, float* const* out, uint32_t frames, const Params& p)
+    {
+        // 1) pre-emphasis + drive gain at the base rate
+        for (uint32_t i = 0; i < frames; ++i)
+            driven_[i] = preHp_.process(in[0][i]) * dbToGain(p.drive[i] * 0.36f);
+
+        // 2) nonlinearity at 2x to keep aliasing down
+        os_.upsample(driven_.data(), up_.data(), frames);
+        for (uint32_t i = 0; i < 2 * frames; ++i)
+            up_[i] = shape(up_[i], p.mode);
+        os_.downsample(up_.data(), out[0], frames);
+
+        // 3) tone, DC removal, output level
+        for (uint32_t i = 0; i < frames; ++i)
+        {
+            if (counter_ == 0)
+                tone_.set(Biquad::Lowpass, sr_, p.tone[i], 0.707f);
+            counter_ = (counter_ + 1) & 15;
+
+            const float y = dc_.process(tone_.process(out[0][i]));
+            out[0][i] = y * 0.7f * dbToGain(p.level[i]);
+        }
+    }
+
+private:
+    static float shape(float x, int mode)
+    {
+        switch (mode)
+        {
+        case 1:  return hardClip(x * 1.2f, 0.8f);
+        case 2:  return fastTanh(x + 0.25f) - 0.2449f; // tanh(0.25): keeps the operating point near zero
+        default: return fastTanh(x);
+        }
+    }
+
+    double sr_ = 48000.0;
+    std::vector<float> driven_, up_;
+    Oversampler2x os_;
+    OnePoleHighpass preHp_;
+    Biquad tone_;
+    DcBlocker dc_;
+    uint32_t counter_ = 0;
+};
+'''

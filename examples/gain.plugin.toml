@@ -1,0 +1,39 @@
+# Canonical example: the smallest useful recipe. One input, one output, one knob.
+
+[plugin]
+id          = "gain"
+name        = "Gain"
+brand       = "Plugin Cookbook"
+brand_id    = "Ckbk"
+unique_id   = "Gain"
+version     = "1.0.0"
+description = "Simple mono gain in decibels."
+license     = "MIT"
+category    = "utility"
+inputs      = 1
+outputs     = 1
+
+[[param]]
+symbol       = "gain"
+name         = "Gain"
+min          = -48.0
+max          = 12.0
+default      = 0.0
+unit         = "dB"
+smoothing_ms = 20
+description  = "Output level. 0 dB leaves the signal unchanged."
+
+[dsp]
+code = '''
+class Kernel {
+public:
+    void prepare(double sampleRate, uint32_t maxBlockSize) {}
+    void reset() {}
+
+    void process(const float* const* in, float* const* out, uint32_t frames, const Params& p)
+    {
+        for (uint32_t i = 0; i < frames; ++i)
+            out[0][i] = in[0][i] * dbToGain(p.gain[i]);
+    }
+};
+'''

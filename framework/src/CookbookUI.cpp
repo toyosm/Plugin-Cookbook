@@ -8,6 +8,7 @@
 //   hover          show the parameter description
 
 #include "DistrhoUI.hpp"
+#include "DistrhoStandaloneUtils.hpp"
 
 #include "RecipeMeta.hpp"
 
@@ -185,12 +186,22 @@ protected:
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2(width, height));
 
+        // Standalone with native audio (no JACK): DPF opens only the output until input is requested.
+        // Ask once on the first frame; on macOS this is what triggers the microphone permission prompt.
+        if (!fInputRequested)
+        {
+            fInputRequested = true;
+            if (Meta::kNumInputs > 0 && isUsingNativeAudio() && supportsAudioInput() && !isAudioInputEnabled())
+                requestAudioInput();
+        }
+
         if (ImGui::Begin("##cookbook", nullptr,
                          ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoBringToFrontOnFocus))
         {
             drawHeader(s, width);
             drawControls(s, width);
+            drawStandaloneStatus(s, height);
         }
         ImGui::End();
     }
@@ -251,6 +262,21 @@ private:
         const float y = wp.y + (kHeaderH - 8.f) * s;
         dl->AddLine(ImVec2(wp.x + kPad * s, y), ImVec2(wp.x + width - kPad * s, y),
                     ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, 0.55f)), 1.f * s);
+    }
+
+    // Only shown in the standalone app when it runs on native audio and the input is still off
+    // (e.g. permission denied): lets the user retry.
+    void drawStandaloneStatus(const float s, const float height)
+    {
+        if (Meta::kNumInputs == 0 || !isUsingNativeAudio() || !supportsAudioInput() || isAudioInputEnabled())
+            return;
+
+        ImGui::SetCursorPos(ImVec2(kPad * s, height - 26.f * s));
+        if (ImGui::SmallButton("Audio input is off - click to enable"))
+            requestAudioInput();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", "Uses the system's default input device. On macOS, allow microphone access "
+                                    "in System Settings > Privacy & Security > Microphone.");
     }
 
     void drawControls(const float s, const float width)
@@ -415,6 +441,7 @@ private:
     float fValues[Meta::kNumParams > 0 ? Meta::kNumParams : 1];
     bool fEditing[Meta::kNumParams > 0 ? Meta::kNumParams : 1];
     float fDragT[Meta::kNumParams > 0 ? Meta::kNumParams : 1];
+    bool fInputRequested = false;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CookbookUI)
 };

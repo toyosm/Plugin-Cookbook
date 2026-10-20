@@ -148,11 +148,13 @@
   .pwidth input { flex: 1; accent-color: var(--accent); }
   #inspector { min-height: 0; overflow: auto; padding: 12px 14px 18px; border-left: 1px solid var(--line);
                background: var(--panel); display: flex; flex-direction: column; gap: 10px; }
+  #inspector > * { flex-shrink: 0; } /* the column scrolls; its rows must never squeeze into each other */
+  .addrow { display: flex; flex-wrap: wrap; gap: 6px; }
   #inspector h3 { margin: 6px 0 0; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
   #inspector .hint { color: var(--muted); font-size: 12px; margin: -4px 0 0; }
   .field { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; font-size: 13px; }
   .field > span { color: var(--muted); }
-  .field input[type=text], .field select { width: 100%; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+  .field input[type=text], .field input[type=number], .field select { width: 100%; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
   .field input[type=color] { width: 44px; height: 26px; padding: 0 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); }
   .field .row { display: flex; align-items: center; gap: 8px; }
   .gcard { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
@@ -735,7 +737,7 @@ function autoGrow() {
 // interface editor: a preview drawn like the plugin's editor (same layout rules and colors as
 // framework/include/cookbook/Controls.hpp and tools/recipe.py), plus an inspector that rewrites [ui]
 
-const uiEd = { tab: "recipe", model: null, selected: null, width: null, timer: null, seq: 0, hits: [], assets: [] };
+const uiEd = { tab: "recipe", model: null, selected: null, width: null, timer: null, seq: 0, hits: [], handles: [], assets: [] };
 
 const PALETTE = {
   dark:  { bg: "#17181b", panel: "#24262b", text: "#e8e6e1", muted: "#8a8d93", border: "#34373d", frame: "#24262b", track: "#2e3036", button: "#34373e" },
@@ -810,25 +812,80 @@ function cellSize(p) {
   return uiEd.model.geometry.cells[p.control];
 }
 
-function naturalWidth() {
-  const G = uiEd.model.geometry;
+function widestRow() {
   let widest = 0;
-  for (const g of uiEd.model.groups) {
+  const skip = pedalSwitch();
+  for (const g0 of uiEd.model.groups) {
+    const g = { ...g0, params: g0.params.filter((sym) => sym !== skip) };
     const cols = g.columns || defaultColumns();
     for (let k = 0; k < g.params.length; k += cols)
       widest = Math.max(widest, g.params.slice(k, k + cols).reduce((a, s) => a + cellSize(paramBySymbol(s))[0], 0));
   }
-  return Math.max(G.min_width, widest + 2 * G.pad);
+  return widest;
 }
 
-function layout(W) {
+function naturalWidth() {
+  const G = uiEd.model.geometry;
+  return Math.max(G.min_width, widestRow() + 2 * G.pad);
+}
+
+// Text sizes and fonts: mirrors label_extra() / title_extra() in tools/recipe.py.
+function textExtras() {
+  const m = uiEd.model, G = m.geometry, B = G.base_text;
+  const tdef = B * G.title_scale[isPedal() ? "pedal" : "flat"];
+  return { label: Math.max(0, (m.ui.label_size || B) - B), title: Math.max(0, (m.ui.title_size || tdef) - tdef),
+           titleSize: m.ui.title_size || tdef, titleDefault: tdef };
+}
+const fontFaces = {}; // "<id>/<file>" -> { fam, ready }
+function familyFor(file) {
+  if (!file || !uiEd.model) return null;
+  const key = uiEd.model.id + "/" + file;
+  if (!(key in fontFaces)) {
+    const fam = "cookbook-font-" + Object.keys(fontFaces).length;
+    fontFaces[key] = { fam, ready: false };
+    const url = (uiEd.model.builtin_fonts || []).includes(file)
+      ? `/api/builtin-font?name=${encodeURIComponent(file)}&token=${encodeURIComponent(TOKEN)}`
+      : `/api/asset?id=${encodeURIComponent(uiEd.model.id)}&name=${encodeURIComponent(file)}&token=${encodeURIComponent(TOKEN)}`;
+    new FontFace(fam, `url("${url}")`).load()
+      .then((f) => { document.fonts.add(f); fontFaces[key].ready = true; renderPreview(); }).catch(() => {});
+  }
+  return fontFaces[key].ready ? fontFaces[key].fam : null;
+}
+function cssFont(px, file) {
+  const fam = familyFor(file);
+  return `${px}px ${fam ? `"${fam}", ` : ""}"DejaVu Sans", Verdana, Geneva, sans-serif`;
+}
+
+// Pedal style: mirrors pedal_geometry() in tools/recipe.py. Returns the enclosure and window sizes.
+function isPedal() { return uiEd.model.ui.style === "pedal" && uiEd.model.ui.layout !== "free"; }
+// the parameter a pedal's footswitch toggles (drawn as the switch, not in the rows), or null
+function pedalSwitch() { return isPedal() && uiEd.model.ui.pedal_switch ? uiEd.model.ui.pedal_switch : null; }
+function pedalGeometry() {
+  const m = uiEd.model, G = m.geometry, P = G.pedal;
+  const ew = m.ui.pedal_width || Math.max(P.min_width, Math.round(widestRow() + 2 * G.pad));
+  const eh = Math.round(P.top + layout(ew, 0).content + (pedalSwitch() ? P.bottom : P.bottom_plain) + textExtras().title);
+  return { ew, eh, W: ew + 2 * P.margin, H: eh + 2 * P.margin };
+}
+function pedalTextColors() {
+  const m = uiEd.model, n = parseInt((m.ui.pedal_color || m.ui.accent).slice(1), 16);
+  const lum = 0.2126 * (n >> 16 & 255) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255);
+  return lum > 140 ? { title: "#1A1A1A", label: "#3B3631", value: "#1A1A1A" } : { title: "#F4F1EA", label: "#D8D2C6", value: "#FFFFFF" };
+}
+
+// Rows of controls in a band of width W starting at x = ox, from startY (default: under the header).
+function layout(W, startY, ox = 0) {
   const m = uiEd.model, G = m.geometry;
   const items = [], titles = [];
-  let y = G.header + (m.ui.subtitle ? G.subtitle : 0) + 8;
+  const X = textExtras();
+  let y = startY ?? G.header + (m.ui.subtitle ? G.subtitle : 0) + X.title + 8;
+  let any = false;
   const avail = W - 2 * G.pad;
-  for (const g of m.groups) {
+  const skip = pedalSwitch();
+  for (const g0 of m.groups) {
+    const g = { ...g0, params: g0.params.filter((sym) => sym !== skip) };
     if (!g.params.length) continue;
-    if (g.title) { titles.push({ title: g.title, y }); y += G.title; }
+    any = true;
+    if (g.title) { titles.push({ title: g.title, y, x: ox, w: W }); y += G.title; }
     const cols = g.columns || defaultColumns();
     const rows = [];
     let row = [], rowW = 0;
@@ -840,20 +897,21 @@ function layout(W) {
     }
     if (row.length) rows.push([row, rowW]);
     const blockW = Math.max(...rows.map((r) => r[1]));
-    const x0 = Math.max(G.pad, (W - blockW) / 2);
+    const x0 = ox + Math.max(G.pad, (W - blockW) / 2);
     for (const [r] of rows) {
       let x = x0, rowH = 0;
       for (const sym of r) {
         const [w, h] = cellSize(paramBySymbol(sym));
         items.push({ sym, x, y, w, h });
         x += w;
-        rowH = Math.max(rowH, h);
+        rowH = Math.max(rowH, h + X.label);
       }
       y += rowH;
     }
     y += G.gap;
   }
-  return { items, titles, height: y - G.gap + G.bottom };
+  const content = any ? y - G.gap - (startY ?? 0) : 0;
+  return { items, titles, height: y - G.gap + G.bottom, content };
 }
 
 // ----- drawing (mirrors Controls.hpp)
@@ -1185,7 +1243,7 @@ function drawControl(c, p, bx, by, bw, bh, pal, accent) {
 
 // Flow layout: the control's box inside its cell; mirrors ControlsView::drawCell().
 function flowBox(p, cx, cy, cw) {
-  const top = cy + 24;
+  const top = cy + 24 + textExtras().label;
   switch (p.control) {
     case "slider": return { x: cx + 12, y: top + 2, w: cw - 24, h: 20, valueY: top + 30 };
     case "toggle": return { x: cx + (cw - 46) / 2, y: top + 16, w: 46, h: 24, valueY: top + 58 + 8 };
@@ -1213,8 +1271,10 @@ function renderPreview() {
   const G = m.geometry;
   let W, H, L = null;
   const slider = $("pwidth");
-  if (free) {
-    [W, H] = freeBase();
+  const pedal = !free && isPedal();
+  if (free || pedal) {
+    if (free) [W, H] = freeBase();
+    else { const pg = pedalGeometry(); W = pg.W; H = pg.H; }
     slider.closest("label").classList.add("hidden");
   } else {
     slider.closest("label").classList.remove("hidden");
@@ -1265,16 +1325,116 @@ function renderPreview() {
   };
   c.font = font(13);
   uiEd.hits = [];
-  const labelOf = (p) => p.label_color || m.ui.label_color || pal.muted;
-  const valueOf = (p) => p.value_color || m.ui.value_color || pal.text;
+  uiEd.handles = [];
+  const X = textExtras();
+  const labelFont = (p) => cssFont((p && p.label_size) || m.ui.label_size || 13, (p && p.label_font) || m.ui.label_font);
+  const valueFont = (p) => cssFont((p && p.value_size) || m.ui.value_size || 13, (p && p.value_font) || m.ui.value_font);
+  // where the name and brand were drawn, so they can be dragged (and highlighted when selected)
+  const markText = (key, text, x, y, size) => {
+    const w = c.measureText(text).width, h = size * 1.2;
+    if (uiEd.selected === key) {
+      c.save(); c.setLineDash([4, 3]); c.strokeStyle = accent; c.lineWidth = 1.5;
+      c.strokeRect(x - 3, y - 3, w + 6, h + 6); c.restore();
+    }
+    uiEd.hits.push({ sym: key, x: x - 3, y: y - 3, w: w + 6, h: h + 6, tx: x, ty: y });
+  };
+  // The selected shape's outline and handles: the ends of a line, a circle's radius, and for the others the
+  // four corners (resize) and a knob above the top edge (rotate). Recorded in uiEd.handles for dragging.
+  const shapeHandles = (sh, k, g) => {
+    const cs = Math.cos(g.rot), sn = Math.sin(g.rot);
+    const world = (lx, ly) => [g.cx + lx * cs - ly * sn, g.cy + lx * sn + ly * cs]; // lx, ly from the center
+    const dot = (x, y, round) => {
+      c.beginPath();
+      if (round) c.arc(x, y, 4.5, 0, Math.PI * 2); else c.rect(x - 4, y - 4, 8, 8);
+      c.fillStyle = "#fff"; c.fill(); c.strokeStyle = accent; c.lineWidth = 1.5; c.stroke();
+    };
+    c.save(); c.setLineDash([]);
+    if (sh.type === "line") {
+      for (const [end, px, py] of [[1, sh.x, sh.y], [2, sh.x2, sh.y2]]) {
+        const [x, y] = world(px - g.cx, py - g.cy);
+        dot(x, y, true);
+        uiEd.handles.push({ k, kind: "end", end, x, y });
+      }
+    } else if (sh.type === "circle") {
+      c.setLineDash([4, 3]); c.strokeStyle = accent; c.lineWidth = 1.5;
+      c.beginPath(); c.arc(sh.x, sh.y, Math.max(0, sh.r) + 3, 0, Math.PI * 2); c.stroke(); c.setLineDash([]);
+      dot(sh.x + sh.r, sh.y, false);
+      uiEd.handles.push({ k, kind: "radius", x: sh.x + sh.r, y: sh.y });
+    } else {
+      const hw = g.bw / 2, hh = g.bh / 2;
+      const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => [sx, sy, ...world(sx * hw, sy * hh)]);
+      c.setLineDash([4, 3]); c.strokeStyle = accent; c.lineWidth = 1.5;
+      c.beginPath(); corners.forEach(([, , x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); c.closePath(); c.stroke();
+      c.setLineDash([]);
+      const top = world(0, -hh), knob = world(0, -hh - 22);
+      c.beginPath(); c.moveTo(...top); c.lineTo(...knob); c.stroke();
+      dot(...knob, true);
+      uiEd.handles.push({ k, kind: "rotate", x: knob[0], y: knob[1], cx: g.cx, cy: g.cy });
+      for (const [sx, sy, x, y] of corners) {
+        dot(x, y, false);
+        // the opposite corner stays put while this one is dragged
+        const [fx, fy] = world(-sx * hw, -sy * hh);
+        uiEd.handles.push({ k, kind: "corner", sx, sy, x, y, fx, fy, rot: g.rot, bw: g.bw, bh: g.bh });
+      }
+    }
+    c.restore();
+  };
+  // [[ui.shape]] decorations, behind the controls (mirrors ControlsView::drawShapes)
+  const drawShapes = () => {
+    (m.shapes || []).forEach((sh, k) => {
+      const w = Math.max(0.5, sh.width);
+      c.save();
+      // the shape's own box (before rotation) and its center
+      let bx, by, bw, bh;
+      if (sh.type === "line") { bx = Math.min(sh.x, sh.x2); by = Math.min(sh.y, sh.y2); bw = Math.abs(sh.x2 - sh.x); bh = Math.abs(sh.y2 - sh.y); }
+      else if (sh.type === "rect" || sh.type === "image") { bx = sh.x; by = sh.y; bw = sh.w; bh = sh.h; }
+      else if (sh.type === "circle") { bx = sh.x - sh.r; by = sh.y - sh.r; bw = bh = 2 * sh.r; }
+      else { c.font = cssFont(sh.size, sh.font); bx = sh.x; by = sh.y; bw = c.measureText(sh.text).width; bh = sh.size * 1.2; }
+      const cx = bx + bw / 2, cy = by + bh / 2, rot = (sh.rotation || 0) * Math.PI / 180;
+      if (rot && sh.type !== "circle") { c.translate(cx, cy); c.rotate(rot); c.translate(-cx, -cy); }
+      if (sh.type === "line") {
+        if (sh.color && sh.width > 0) {
+          c.strokeStyle = sh.color; c.lineWidth = w; c.beginPath(); c.moveTo(sh.x, sh.y); c.lineTo(sh.x2, sh.y2); c.stroke();
+        }
+      } else if (sh.type === "rect") {
+        c.beginPath(); c.roundRect(sh.x, sh.y, sh.w, sh.h, Math.min(sh.radius, Math.abs(sh.w) / 2, Math.abs(sh.h) / 2));
+        if (sh.fill) { c.fillStyle = sh.fill; c.fill(); }
+        if (sh.color && sh.width > 0) { c.strokeStyle = sh.color; c.lineWidth = w; c.stroke(); }
+      } else if (sh.type === "circle") {
+        c.beginPath(); c.arc(sh.x, sh.y, Math.max(0, sh.r), 0, Math.PI * 2);
+        if (sh.fill) { c.fillStyle = sh.fill; c.fill(); }
+        if (sh.color && sh.width > 0) { c.strokeStyle = sh.color; c.lineWidth = w; c.stroke(); }
+      } else if (sh.type === "image") {
+        const img = imageFor(sh.image);
+        if (img) c.drawImage(img, sh.x, sh.y, sh.w, sh.h);
+        else { c.setLineDash([4, 3]); c.strokeStyle = pal.muted; c.lineWidth = 1; c.strokeRect(sh.x, sh.y, sh.w, sh.h); }
+      } else {
+        c.fillStyle = sh.color || m.ui.label_color || (pt ? pt.label : pal.muted);
+        c.fillText(sh.text, sh.x, sh.y);
+      }
+      c.restore();
+      // hit box: the rotated box's bounds, a few px wider so thin lines are easy to grab
+      const cs = Math.abs(Math.cos(rot)), sn = Math.abs(Math.sin(rot));
+      const rw = (sh.type === "circle" ? bw : bw * cs + bh * sn) + 8, rh = (sh.type === "circle" ? bh : bw * sn + bh * cs) + 8;
+      const box = { x: cx - rw / 2, y: cy - rh / 2, w: rw, h: rh };
+      if (uiEd.selected === "shape:" + k) shapeHandles(sh, k, { bx, by, bw, bh, cx, cy, rot });
+      uiEd.hits.push({ sym: "shape:" + k, ...box });
+    });
+  };
+  const titleFont = () => cssFont(X.titleSize, m.ui.title_font);
+  const pt = pedal ? pedalTextColors() : null;
+  const labelOf = (p) => p.label_color || m.ui.label_color || (pt ? pt.label : pal.muted);
+  const valueOf = (p) => p.value_color || m.ui.value_color || (pt ? pt.value : pal.text);
 
   if (free) {
+    drawShapes();
     for (const p of m.params) {
       const [w, h] = freeBox(p);
       const x = p.x || 0, y = p.y || 0;
-      if (showsLabel(p)) centered(p.short_name || p.name, x, w, y - 20, labelOf(p));
+      if (showsLabel(p)) { c.font = labelFont(p); centered(p.short_name || p.name, x, w, y - 20 - X.label, labelOf(p)); }
+      c.font = font(13);
       const hasValue = drawControl(c, p, x, y, w, h, pal, accent);
-      if (hasValue && showsValueText(p)) centered(formatValue(p, p.default), x, w, y + h + 6, valueOf(p));
+      if (hasValue && showsValueText(p)) { c.font = valueFont(p); centered(formatValue(p, p.default), x, w, y + h + 6, valueOf(p)); }
       if (uiEd.selected === p.symbol) {
         c.save(); c.setLineDash([4, 3]); c.strokeStyle = accent; c.lineWidth = 1.5;
         c.strokeRect(x - 3, y - 3, w + 6, h + 6); c.restore();
@@ -1284,35 +1444,96 @@ function renderPreview() {
     return;
   }
 
+  if (pedal) {
+    const P = G.pedal, pg = pedalGeometry();
+    const ex = P.margin, ey = P.margin, ew = pg.ew, eh = pg.eh, rad = 14;
+    const paint = m.ui.pedal_color || accent;
+    const rr = (x, y, w, h, r, fill) => { c.fillStyle = fill; c.beginPath(); c.roundRect(x, y, w, h, r); c.fill(); };
+    c.globalAlpha = 0.35; rr(ex + 2, ey + 7, ew, eh + 2, rad + 2, "#000000"); c.globalAlpha = 1;
+    rr(ex, ey, ew, eh, rad, darken(paint, 0.35));
+    rr(ex + 2, ey + 2, ew - 4, eh - 4, rad - 2, paint);
+    c.strokeStyle = "rgba(255,255,255,0.28)"; c.lineWidth = 1.5;
+    c.beginPath(); c.moveTo(ex + rad, ey + 3.5); c.lineTo(ex + ew - rad, ey + 3.5); c.stroke();
+    drawShapes();
+    L = layout(ew, ey + P.top, ex);
+    for (const t of L.titles) {
+      c.font = labelFont(null);
+      c.fillStyle = m.ui.label_color || pt.label; c.fillText(t.title, t.x + G.pad, t.y + 6);
+      const tw = c.measureText(t.title).width;
+      c.strokeStyle = pal.border; c.lineWidth = 1; c.beginPath();
+      c.moveTo(t.x + G.pad + tw + 8, t.y + 13.5); c.lineTo(t.x + t.w - G.pad, t.y + 13.5); c.stroke();
+    }
+    drawFlowItems(L.items);
+    const sw = pedalSwitch();
+    const yb = ey + eh - ((sw ? P.bottom : P.bottom_plain) + X.title - 10);
+    c.font = titleFont();
+    const nw = c.measureText(m.name).width;
+    const [nx, ny] = m.ui.title_pos || [ex + (ew - nw) / 2, yb];
+    c.fillStyle = m.ui.title_color || pt.title; c.fillText(m.name, nx, ny);
+    markText("__title", m.name, nx, ny, X.titleSize);
+    c.font = labelFont(null);
+    const line = m.ui.subtitle || m.brand, lw = c.measureText(line).width;
+    const [bx2, by2] = m.ui.brand_pos || [ex + (ew - lw) / 2, yb + 30 + X.title];
+    c.fillStyle = m.ui.label_color || pt.label; c.fillText(line, bx2, by2);
+    markText("__brand", line, bx2, by2, m.ui.label_size || 13);
+    if (sw) {
+      const fx = ex + ew / 2, fy = ey + eh - 36, metal = "#b4b8bf", r = 22;
+      const dsc = (x, y, rad, col) => { c.fillStyle = col; c.beginPath(); c.arc(x, y, rad, 0, Math.PI * 2); c.fill(); };
+      dsc(fx, fy, r, darken(metal, 0.6)); dsc(fx, fy, r * 0.86, darken(metal, 0.3));
+      for (let k = 0; k <= 6; k++) { const f = k / 6; dsc(fx - r * 0.08 * f, fy - r * 0.08 * f, r * (0.7 - 0.3 * f), lighten(darken(metal, 0.2 - 0.2 * f), 0.4 * f)); }
+      const on = (paramBySymbol(sw) || {}).default > 0.5;
+      if (on) {
+        c.globalAlpha = 0.28; dsc(fx - 48, fy, 9, "#e5352b"); c.globalAlpha = 1;
+        dsc(fx - 48, fy, 5, "#e5352b"); c.globalAlpha = 0.6; dsc(fx - 49.5, fy - 1.5, 1.8, "#ffffff"); c.globalAlpha = 1;
+      } else dsc(fx - 48, fy, 5, darken("#e5352b", 0.65));
+      c.strokeStyle = "rgba(0,0,0,0.45)"; c.lineWidth = 1; c.beginPath(); c.arc(fx - 48, fy, 5, 0, Math.PI * 2); c.stroke();
+      uiEd.hits.push({ sym: sw, x: fx - r, y: fy - r, w: 2 * r, h: 2 * r });
+    }
+    return;
+  }
+
   // header
-  c.font = font(13 * 1.45); c.fillStyle = m.ui.title_color || pal.text; c.fillText(m.name, G.pad, 14);
-  c.font = font(13);
+  const [tx, ty] = m.ui.title_pos || [G.pad, 14];
+  c.font = titleFont(); c.fillStyle = m.ui.title_color || pal.text; c.fillText(m.name, tx, ty);
+  markText("__title", m.name, tx, ty, X.titleSize);
+  c.font = labelFont(null);
   c.fillStyle = m.ui.label_color || pal.muted;
-  c.fillText(m.brand, W - G.pad - c.measureText(m.brand).width, 20);
-  if (m.ui.subtitle) c.fillText(m.ui.subtitle, G.pad, 38);
-  const hy = G.header + (m.ui.subtitle ? G.subtitle : 0) - 8;
+  const [bx1, by1] = m.ui.brand_pos || [W - G.pad - c.measureText(m.brand).width, 20];
+  c.fillText(m.brand, bx1, by1);
+  markText("__brand", m.brand, bx1, by1, m.ui.label_size || 13);
+  c.fillStyle = m.ui.label_color || pal.muted;
+  if (m.ui.subtitle) c.fillText(m.ui.subtitle, tx, ty + 24 + X.title);
+  const hy = G.header + (m.ui.subtitle ? G.subtitle : 0) + X.title - 8;
   c.globalAlpha = 0.55; c.strokeStyle = accent; c.lineWidth = 1;
   c.beginPath(); c.moveTo(G.pad, hy + 0.5); c.lineTo(W - G.pad, hy + 0.5); c.stroke(); c.globalAlpha = 1;
+  drawShapes();
 
   for (const t of L.titles) {
-    c.fillStyle = m.ui.label_color || pal.muted; c.fillText(t.title, G.pad, t.y + 6);
+    c.font = labelFont(null);
+    c.fillStyle = m.ui.label_color || pal.muted; c.fillText(t.title, t.x + G.pad, t.y + 6);
     const tw = c.measureText(t.title).width;
     c.strokeStyle = pal.border; c.lineWidth = 1; c.beginPath();
     c.moveTo(G.pad + tw + 8, t.y + 6 + 7.5); c.lineTo(W - G.pad, t.y + 6 + 7.5); c.stroke();
   }
 
-  for (const it of L.items) {
-    const p = paramBySymbol(it.sym);
-    const { x: cx, y: cy, w: cw } = it;
-    centered(p.short_name || p.name, cx, cw, cy, labelOf(p));
-    const box = flowBox(p, cx, cy, cw);
-    drawControl(c, p, box.x, box.y, box.w, box.h, pal, accent);
-    if (box.valueY >= 0) centered(formatValue(p, p.default), cx, cw, box.valueY, valueOf(p));
-    if (uiEd.selected === p.symbol) {
-      c.save(); c.setLineDash([4, 3]); c.strokeStyle = accent; c.lineWidth = 1.5;
-      c.beginPath(); c.roundRect(cx + 2, cy - 4, cw - 4, it.h - 2, 6); c.stroke(); c.restore();
+  drawFlowItems(L.items);
+
+  function drawFlowItems(items) {
+    for (const it of items) {
+      const p = paramBySymbol(it.sym);
+      const { x: cx, y: cy, w: cw } = it;
+      c.font = labelFont(p);
+      centered(p.short_name || p.name, cx, cw, cy, labelOf(p));
+      const box = flowBox(p, cx, cy, cw);
+      c.font = font(13);
+      drawControl(c, p, box.x, box.y, box.w, box.h, pal, accent);
+      if (box.valueY >= 0) { c.font = valueFont(p); centered(formatValue(p, p.default), cx, cw, box.valueY, valueOf(p)); }
+      if (uiEd.selected === p.symbol) {
+        c.save(); c.setLineDash([4, 3]); c.strokeStyle = accent; c.lineWidth = 1.5;
+        c.beginPath(); c.roundRect(cx + 2, cy - 4, cw - 4, it.h - 2, 6); c.stroke(); c.restore();
+      }
+      uiEd.hits.push({ sym: p.symbol, x: cx, y: cy - 4, w: cw, h: it.h, box });
     }
-    uiEd.hits.push({ sym: p.symbol, x: cx, y: cy - 4, w: cw, h: it.h, box });
   }
 }
 
@@ -1356,6 +1577,60 @@ function colorField(label, obj, key, fallback, changed) {
   return field(label, on, pick);
 }
 
+// Switching between flat and pedal keeps the look: the flat background becomes the pedal's paint (and
+// back), and texts keep the colors and sizes they had instead of taking the other style's defaults.
+function switchStyle(style) {
+  const m = uiEd.model, u = m.ui;
+  if ((u.style || "flat") === style) return;
+  const pal = PALETTE[u.theme] || PALETTE.dark;
+  const before = isPedal() ? pedalTextColors() : { title: pal.text, label: pal.muted, value: pal.text };
+  const titleSize = textExtras().titleSize;
+  if (style === "pedal") {
+    if (!u.pedal_color && u.background) u.pedal_color = u.background;
+    // the backdrop around the pedal goes back to the theme's when it would hide the enclosure
+    if (u.background && u.background.toUpperCase() === (u.pedal_color || "").toUpperCase()) u.background = null;
+  } else if (!u.background && u.pedal_color) {
+    u.background = u.pedal_color;
+  }
+  u.title_color = u.title_color || before.title.toUpperCase();
+  u.label_color = u.label_color || before.label.toUpperCase();
+  u.value_color = u.value_color || before.value.toUpperCase();
+  u.title_size = u.title_size || Math.round(titleSize);
+  u.style = style;
+}
+
+// A font menu: the inherited choice, the built-in fonts and the files added to this plugin.
+// inherited = null for a global setting ("Default" = DejaVu Sans), else the global font a control falls back to.
+function fontPicker(obj, key, inherited, changed) {
+  const m = uiEd.model;
+  const label = (n) => n.includes("/") ? n.split("/").pop() : n;
+  const sel = el("select", { onchange: (e) => { obj[key] = e.target.value || null; changed(); } },
+    el("option", { value: "" }, inherited === null ? "Default (DejaVu Sans)" : `Same as all (${inherited ? label(inherited) : "Default"})`));
+  const builtin = el("optgroup", { label: "Built-in" });
+  for (const n of m.builtin_fonts || []) builtin.append(el("option", { value: n }, n));
+  sel.append(builtin);
+  const mine = new Set(uiEd.assets.filter((a) => a.kind === "font").map((a) => a.name));
+  if (obj[key] && !(m.builtin_fonts || []).includes(obj[key])) mine.add(obj[key]);
+  if (mine.size) {
+    const g = el("optgroup", { label: "Added to this plugin" });
+    for (const n of [...mine].sort()) g.append(el("option", { value: n }, label(n)));
+    sel.append(g);
+  }
+  sel.value = obj[key] || "";
+  return sel;
+}
+
+// A size in px, showing the value in effect; setting it back to the inherited size clears the override.
+function sizePicker(obj, key, inherited, changed) {
+  return el("input", { type: "number", min: 7, max: 96, step: 1, value: obj[key] ?? inherited, style: "width:64px",
+    title: `Size in pixels (inherited: ${inherited})`,
+    onchange: (e) => {
+      const v = parseFloat(e.target.value);
+      obj[key] = Number.isFinite(v) && v !== inherited ? Math.max(7, Math.min(96, v)) : null;
+      changed();
+    } });
+}
+
 function columnsSelect(value, auto, onchange) {
   const s = el("select", { onchange: (e) => onchange(parseInt(e.target.value, 10)) });
   if (auto) s.append(el("option", { value: 0 }, "Auto"));
@@ -1382,12 +1657,49 @@ function renderInspector() {
   const bg = el("input", { type: "color", value: (m.ui.background || (PALETTE[m.ui.theme] || PALETTE.dark).bg).toLowerCase(),
     disabled: !m.ui.background, oninput: (e) => { m.ui.background = e.target.value.toUpperCase(); changed(false); } });
   box.append(field("Background", custom, bg));
+  const styleSel = el("select", { onchange: (e) => { switchStyle(e.target.value); changed(); } },
+    el("option", { value: "flat" }, "Flat"), el("option", { value: "pedal" }, "Pedal"));
+  styleSel.value = m.ui.style || "flat";
+  box.append(field("Style", styleSel));
+  if (m.ui.style === "pedal") {
+    box.append(colorField("Pedal color", m.ui, "pedal_color", m.ui.accent, changed));
+    const P = m.geometry.pedal;
+    const auto = !m.ui.pedal_width;
+    const cur = m.ui.pedal_width || pedalGeometry().ew;
+    const label = el("span", { class: "hint" }, auto ? "auto" : `${cur} px`);
+    const range = el("input", { type: "range", min: P.min_width, max: 1000, value: cur, style: "flex:1",
+      oninput: (e) => { m.ui.pedal_width = parseInt(e.target.value, 10); label.textContent = `${m.ui.pedal_width} px`; changed(false); } });
+    const autoBox = el("input", { type: "checkbox", checked: auto, title: "Fit the widest row",
+      onchange: (e) => { m.ui.pedal_width = e.target.checked ? null : pedalGeometry().ew; changed(); } });
+    box.append(field("Pedal width", autoBox, range, label));
+    const swSel = el("select", { onchange: (e) => { m.ui.pedal_switch = e.target.value; changed(); } },
+      el("option", { value: "" }, "None"));
+    for (const p of m.params)
+      if (p.type === "bool" || (p.type === "choice" && p.choices.length === 2))
+        swSel.append(el("option", { value: p.symbol }, p.short_name || p.name));
+    swSel.value = m.ui.pedal_switch || "";
+    box.append(field("Footswitch", swSel));
+    box.append(el("p", { class: "hint" }, "A working footswitch with an LED for an on/off parameter (for example On or Bypass). That control leaves the rows."));
+  }
   box.append(field("Subtitle", el("input", { type: "text", value: m.ui.subtitle, maxlength: 60, placeholder: "Optional",
     oninput: (e) => { m.ui.subtitle = e.target.value; changed(false); } })));
   const pal = PALETTE[m.ui.theme] || PALETTE.dark;
-  box.append(colorField("Title text", m.ui, "title_color", pal.text, changed));
-  box.append(colorField("Label text", m.ui, "label_color", pal.muted, changed));
-  box.append(colorField("Value text", m.ui, "value_color", pal.text, changed));
+  const tdef = isPedal() ? pedalTextColors() : { title: pal.text, label: pal.muted, value: pal.text };
+  box.append(colorField("Title text", m.ui, "title_color", tdef.title, changed));
+  box.append(colorField("Label text", m.ui, "label_color", tdef.label, changed));
+  box.append(colorField("Value text", m.ui, "value_color", tdef.value, changed));
+  box.append(field("Title font", fontPicker(m.ui, "title_font", null, changed), sizePicker(m.ui, "title_size", Math.round(textExtras().titleDefault * 10) / 10, changed)));
+  box.append(field("Label font", fontPicker(m.ui, "label_font", null, changed), sizePicker(m.ui, "label_size", 13, changed)));
+  box.append(field("Value font", fontPicker(m.ui, "value_font", null, changed), sizePicker(m.ui, "value_size", 13, changed)));
+  box.append(el("p", { class: "hint" }, "Built-in fonts, or add your own .ttf/.otf with \"+ Add image or font\" below (for example from fonts.google.com)."));
+  const posRow = (label, key) => {
+    const v = m.ui[key];
+    return field(label, el("span", { class: "hint" }, v ? `${v[0]}, ${v[1]}` : "automatic"),
+      v ? el("button", { onclick: () => { m.ui[key] = null; changed(); } }, "Reset") : null);
+  };
+  box.append(posRow("Title place", "title_pos"));
+  box.append(posRow("Brand place", "brand_pos"));
+  box.append(el("p", { class: "hint" }, "Drag the plugin name or the brand on the preview to place them."));
   box.append(field("Per row", columnsSelect(m.ui.columns, false, (n) => { m.ui.columns = n; m.ui.columns_set = true; changed(); })));
   const knobStyle = el("select", { onchange: (e) => { m.ui.knob_style = e.target.value; changed(); } });
   for (const k of m.knob_styles) knobStyle.append(el("option", { value: k }, k[0].toUpperCase() + k.slice(1)));
@@ -1458,12 +1770,10 @@ function renderInspector() {
     box.append(chips);
   }
 
-  // images
-  box.append(el("h3", {}, "Images"));
-  box.append(el("p", { class: "hint" }, "PNG files, saved next to the recipe in plugins/" + m.id + "/. Draw them at twice the size and set Scale to 2x for sharp retina screens."));
+  // images (used by the Shapes and Images sections)
   const imageNames = () => {
     const names = new Set(Object.keys(m.images));
-    for (const a of uiEd.assets) names.add(a.name);
+    for (const a of uiEd.assets) if (a.kind !== "font") names.add(a.name);
     return [...names].sort();
   };
   const useImage = (name) => {
@@ -1476,6 +1786,90 @@ function renderInspector() {
     sel.value = value || "";
     return sel;
   };
+  // an image's size in the design: its pixels over the image scale
+  const naturalSize = (name) => {
+    const px = m.images[name] || [100, 100], sc = m.ui.image_scale || 1;
+    return [Math.round(px[0] / sc), Math.round(px[1] / sc)];
+  };
+
+  // shapes
+  box.append(el("h3", {}, "Shapes"));
+  box.append(el("p", { class: "hint" }, "Lines, rectangles, circles, text and images drawn behind the controls. Drag them on the preview; " +
+    "select one to resize it from its corners or ends and rotate it from the round handle on top (Shift: 15° steps)."));
+  const addShape = (type, image) => {
+    // along the top edge, a little further right for each new shape, away from the controls; it starts
+    // selected, so it can be dragged into place right away
+    const x0 = 14 + 18 * ((m.shapes || []).length % 10), y0 = 8;
+    const base = { type, x: x0, y: y0, x2: x0 + 100, y2: y0, w: 100, h: 50, r: 25, color: "#8A8D93", fill: null,
+                   width: 1.5, radius: 0, text: "Text", size: 13, font: "", rotation: 0 };
+    if (type === "circle") Object.assign(base, { x: x0 + 25, y: y0 + 25 });
+    if (type === "text") base.color = null;
+    if (type === "image") {
+      // its own size, made smaller if it would not fit in half the design
+      let [w, h] = naturalSize(image);
+      const k = Math.min(1, (uiEd.designW || 400) / 2 / w);
+      Object.assign(base, { image, w: Math.round(w * k), h: Math.round(h * k) });
+    }
+    m.shapes = [...(m.shapes || []), base];
+    uiEd.selected = "shape:" + (m.shapes.length - 1);
+    changed();
+  };
+  const shapeChips = el("div", { class: "chips" });
+  (m.shapes || []).forEach((sh, k) => {
+    shapeChips.append(el("span", { class: "pchip" + (uiEd.selected === "shape:" + k ? " sel" : ""),
+      onclick: () => { uiEd.selected = "shape:" + k; renderInspector(); renderPreview(); } },
+      sh.type === "text" ? `"${sh.text}"` : sh.type[0].toUpperCase() + sh.type.slice(1), el("small", {}, `#${k + 1}`)));
+  });
+  if ((m.shapes || []).length) box.append(shapeChips);
+  const addRow = el("div", { class: "addrow" });
+  for (const [type, label] of [["line", "+ Line"], ["rect", "+ Rectangle"], ["circle", "+ Circle"], ["text", "+ Text"]])
+    addRow.append(el("button", { onclick: () => addShape(type) }, label));
+  // + Image: the first image the plugin has, or a new one from disk
+  addRow.append(el("button", { onclick: () => {
+    const first = imageNames()[0];
+    if (first) { useImage(first); addShape("image", first); }
+    else { uiEd.uploadAsShape = true; uiEd.replaceShapeImage = null; upload.click(); }
+  } }, "+ Image"));
+  box.append(addRow);
+  const selShape = uiEd.selected && uiEd.selected.startsWith("shape:") ? (m.shapes || [])[parseInt(uiEd.selected.slice(6), 10)] : null;
+  if (selShape) {
+    const sh = selShape;
+    const num = (key, label) => el("input", { type: "number", value: sh[key], step: 1, style: "width:64px", title: label,
+      onchange: (e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) { sh[key] = v; changed(); } } });
+    box.append(el("h3", {}, `Shape #${parseInt(uiEd.selected.slice(6), 10) + 1} · ${sh.type}`));
+    box.append(field(sh.type === "circle" ? "Center" : sh.type === "line" ? "Start" : "Position", num("x", "x"), num("y", "y")));
+    if (sh.type === "line") box.append(field("End", num("x2", "x"), num("y2", "y")));
+    if (sh.type === "rect" || sh.type === "image") box.append(field("Size", num("w", "width"), num("h", "height")));
+    if (sh.type === "image") {
+      box.append(field("Image", imageSelect(sh.image, "None", (v) => { if (v) { sh.image = v; changed(); } }),
+        el("button", { title: "The image's own proportions and size", onclick: () => {
+          [sh.w, sh.h] = naturalSize(sh.image); changed();
+        } }, "Original size")));
+      box.append(el("button", { onclick: () => { uiEd.uploadAsShape = false; uiEd.replaceShapeImage = sh; upload.click(); } }, "Upload another image…"));
+    }
+    if (sh.type === "circle") box.append(field("Radius", num("r", "radius")));
+    if (sh.type !== "circle") {
+      const rotBtn = (deg) => el("button", { title: `Rotate to ${deg}°`, onclick: () => { sh.rotation = deg; changed(); } }, `${deg}°`);
+      box.append(field("Rotation", num("rotation", "degrees, clockwise"), rotBtn(0), rotBtn(90), rotBtn(45)));
+    }
+    if (sh.type === "text") {
+      box.append(field("Text", el("input", { type: "text", value: sh.text, maxlength: 80,
+        oninput: (e) => { sh.text = e.target.value || "?"; changed(false); } })));
+      box.append(field("Font", fontPicker(sh, "font", m.ui.label_font || "", changed), num("size", "size in px")));
+      box.append(colorField("Color", sh, "color", m.ui.label_color || "#8A8D93", changed));
+    } else if (sh.type !== "image") {
+      box.append(colorField(sh.type === "line" ? "Color" : "Outline", sh, "color", "#8A8D93", changed));
+      box.append(field("Thickness", num("width", "line thickness in px")));
+      if (sh.type !== "line") box.append(colorField("Fill", sh, "fill", "#34373E", changed));
+      if (sh.type === "rect") box.append(field("Corners", num("radius", "corner radius in px")));
+    }
+    box.append(el("button", { onclick: deleteSelectedShape }, "Delete shape"));
+    box.append(el("p", { class: "hint" }, "Or press Delete / Backspace."));
+  }
+
+  // images
+  box.append(el("h3", {}, "Images"));
+  box.append(el("p", { class: "hint" }, "PNG files, saved next to the recipe in plugins/" + m.id + "/. Draw them at twice the size and set Scale to 2x for sharp retina screens."));
   box.append(field("Background", imageSelect(m.ui.background_image, "None", (v) => {
     m.ui.background_image = v;
     if (v && m.ui.layout === "free") m.ui.size = null;
@@ -1493,20 +1887,27 @@ function renderInspector() {
   }
   box.append(field("Labels", el("input", { type: "checkbox", checked: m.ui.labels,
     onchange: (e) => { m.ui.labels = e.target.checked; changed(); } }), el("span", { class: "hint" }, "names and values")));
-  const upload = el("input", { type: "file", accept: "image/png", class: "hidden", onchange: async (e) => {
+  const upload = el("input", { type: "file", accept: "image/png,.ttf,.otf", class: "hidden", onchange: async (e) => {
     const file = e.target.files[0];
+    e.target.value = "";
     if (!file) return;
     const data = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.readAsDataURL(file); });
     try {
       const r = await api("/api/asset", { id: m.id, name: file.name, data });
       uiEd.assets = r.assets;
       useImage(r.name);
+      const isImage = (uiEd.assets.find((a) => a.name === r.name) || {}).kind !== "font";
+      const asShape = uiEd.uploadAsShape, replace = uiEd.replaceShapeImage;
+      uiEd.uploadAsShape = false; uiEd.replaceShapeImage = null;
+      if (isImage && asShape) addShape("image", r.name);
+      else if (isImage && replace) { replace.image = r.name; changed(); }
       renderInspector();
     } catch (err) {
       showUiError("Could not add the image: " + err.message);
     }
   } });
-  box.append(upload, el("button", { onclick: () => upload.click() }, "+ Add image…"));
+  box.append(upload, el("button", { onclick: () => { uiEd.uploadAsShape = false; uiEd.replaceShapeImage = null; upload.click(); } },
+    "+ Add image or font…"));
 
   const sel = uiEd.selected && paramBySymbol(uiEd.selected);
   if (sel) {
@@ -1538,8 +1939,13 @@ function renderInspector() {
     box.append(tri("label", "Name"));
     box.append(tri("value", "Value"));
     const palSel = PALETTE[m.ui.theme] || PALETTE.dark;
-    box.append(colorField("Name color", sel, "label_color", m.ui.label_color || palSel.muted, changed));
-    box.append(colorField("Value color", sel, "value_color", m.ui.value_color || palSel.text, changed));
+    const pdef = isPedal() ? pedalTextColors() : null;
+    box.append(colorField("Name color", sel, "label_color", m.ui.label_color || (pdef ? pdef.label : palSel.muted), changed));
+    box.append(colorField("Value color", sel, "value_color", m.ui.value_color || (pdef ? pdef.value : palSel.text), changed));
+    box.append(field("Name font", fontPicker(sel, "label_font", m.ui.label_font || "", changed),
+                     sizePicker(sel, "label_size", m.ui.label_size || 13, changed)));
+    box.append(field("Value font", fontPicker(sel, "value_font", m.ui.value_font || "", changed),
+                     sizePicker(sel, "value_size", m.ui.value_size || 13, changed)));
     if (["knob", "small-knob", "large-knob"].includes(sel.control)) {
       box.append(field("Image", imageSelect(sel.knob_image, "Same as all knobs", (v) => { sel.knob_image = v; changed(); })));
       if (sel.knob_image) {
@@ -1554,6 +1960,23 @@ function renderInspector() {
     }
   }
 }
+
+function deleteSelectedShape() {
+  const m = uiEd.model;
+  if (!m || !uiEd.selected || !uiEd.selected.startsWith("shape:")) return false;
+  m.shapes.splice(parseInt(uiEd.selected.slice(6), 10), 1);
+  uiEd.selected = null;
+  renderInspector(); renderPreview(); scheduleApply();
+  return true;
+}
+
+// Delete / Backspace removes the selected shape, unless you are typing in a field.
+document.addEventListener("keydown", (e) => {
+  if ((e.key !== "Delete" && e.key !== "Backspace") || uiEd.tab !== "ui") return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+  if (deleteSelectedShape()) e.preventDefault();
+});
 
 function moveParam(sym, gi, beforeSym) {
   if (!sym || sym === beforeSym) return;
@@ -1583,6 +2006,7 @@ function scheduleApply() {
     const payload = {
       ui: m.ui,
       groups: m.groups.filter((g) => g.params.length),
+      shapes: m.shapes || [],
       params: m.params,
 
     };
@@ -1607,19 +2031,116 @@ function previewPoint(e) {
 let drag = null;
 $("preview").addEventListener("pointerdown", (e) => {
   if (!uiEd.model) return;
-  const [x, y] = previewPoint(e);
-  const hit = [...uiEd.hits].reverse().find((h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h);
+  const [x, y, kpx] = previewPoint(e);
+  // a handle of the selected shape comes first
+  const handle = uiEd.handles.find((h) => Math.hypot(h.x - x, h.y - y) <= 7 * Math.max(1, kpx));
+  if (handle) {
+    const sh = uiEd.model.shapes[handle.k];
+    drag = { handle, shape: sh, start: { ...sh }, moved: false };
+    $("preview").setPointerCapture(e.pointerId);
+    return;
+  }
+  // Overlapping things: the selected one keeps the click (so a shape under a knob can be dragged once picked
+  // from its chip); then a control right under the pointer; otherwise the smallest thing (a thin line beats
+  // the cell it crosses).
+  const under = uiEd.hits.filter((h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h);
+  const inside = (b) => b && x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h;
+  const hit = under.find((h) => h.sym === uiEd.selected)
+    || under.find((h) => inside(h.box))               // right on a knob, slider or switch: that control
+    || under.sort((a, b) => a.w * a.h - b.w * b.h)[0];
   uiEd.selected = hit ? hit.sym : null;
-  if (hit && uiEd.model.ui.layout === "free") {
+  if (hit && hit.sym.startsWith("shape:")) {
+    const sh = uiEd.model.shapes[parseInt(hit.sym.slice(6), 10)];
+    drag = { shape: sh, x0: x, y0: y, start: { ...sh }, moved: false };
+    $("preview").setPointerCapture(e.pointerId);
+  } else if (hit && hit.sym.startsWith("__")) {
+    drag = { text: hit.sym === "__title" ? "title_pos" : "brand_pos", dx: x - hit.tx, dy: y - hit.ty, moved: false };
+    $("preview").setPointerCapture(e.pointerId);
+  } else if (hit && uiEd.model.ui.layout === "free") {
     const p = paramBySymbol(hit.sym);
     drag = { p, dx: x - (p.x || 0), dy: y - (p.y || 0), moved: false };
     $("preview").setPointerCapture(e.pointerId);
   }
   renderInspector(); renderPreview();
 });
+// Resizing and rotating a shape by its handles (see shapeHandles). Shift: 15° steps when rotating or angling a
+// line; on a corner it keeps the proportions of a rectangle (an image keeps them unless Shift is held).
+function dragHandle(d, x, y, shift) {
+  const h = d.handle, sh = d.shape, st = d.start, r1 = (v) => Math.round(v);
+  if (h.kind === "end") {
+    // the line's rotation is folded into its ends, so they land exactly where they are dragged
+    const rad = (st.rotation || 0) * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad);
+    const cx = (st.x + st.x2) / 2, cy = (st.y + st.y2) / 2;
+    const world = (px, py) => [cx + (px - cx) * cs - (py - cy) * sn, cy + (px - cx) * sn + (py - cy) * cs];
+    const [ox, oy] = h.end === 1 ? world(st.x2, st.y2) : world(st.x, st.y);
+    let nx = x, ny = y;
+    if (shift) {
+      const len = Math.hypot(x - ox, y - oy), step = Math.PI / 12;
+      const a = Math.round(Math.atan2(y - oy, x - ox) / step) * step;
+      nx = ox + len * Math.cos(a); ny = oy + len * Math.sin(a);
+    }
+    const [ax, ay] = h.end === 1 ? [nx, ny] : [ox, oy], [bx, by] = h.end === 1 ? [ox, oy] : [nx, ny];
+    Object.assign(sh, { x: r1(ax), y: r1(ay), x2: r1(bx), y2: r1(by), rotation: 0 });
+  } else if (h.kind === "radius") {
+    sh.r = Math.max(1, r1(Math.hypot(x - st.x, y - st.y)));
+  } else if (h.kind === "rotate") {
+    let deg = Math.atan2(y - h.cy, x - h.cx) * 180 / Math.PI + 90;
+    deg = shift ? Math.round(deg / 15) * 15 : Math.round(deg);
+    if (deg > 180) deg -= 360;
+    sh.rotation = deg;
+  } else if (h.kind === "corner") {
+    const cs = Math.cos(h.rot), sn = Math.sin(h.rot);
+    // the pointer relative to the fixed corner, in the shape's own (unrotated) axes
+    const dx = (x - h.fx) * cs + (y - h.fy) * sn, dy = -(x - h.fx) * sn + (y - h.fy) * cs;
+    let w = Math.max(4, dx * h.sx), hh = Math.max(4, dy * h.sy);
+    const keep = sh.type === "text" || (sh.type === "image" ? !shift : shift);
+    if (keep) {
+      const k = Math.max(w / h.bw, hh / h.bh);
+      w = h.bw * k; hh = h.bh * k;
+    }
+    if (sh.type === "text") {
+      sh.size = Math.max(7, Math.min(96, r1(st.size * w / h.bw)));
+      w = h.bw * sh.size / st.size; hh = h.bh * sh.size / st.size;
+    } else {
+      w = r1(w); hh = r1(hh);
+      sh.w = w; sh.h = hh;
+    }
+    // the box's new center, measured from the fixed corner
+    const lx = h.sx * w / 2, ly = h.sy * hh / 2;
+    const cx = h.fx + lx * cs - ly * sn, cy = h.fy + lx * sn + ly * cs;
+    sh.x = r1(cx - w / 2); sh.y = r1(cy - hh / 2);
+  }
+}
 $("preview").addEventListener("pointermove", (e) => {
-  if (!drag) return;
+  if (!drag) {
+    const [x, y, kpx] = previewPoint(e);
+    const h = uiEd.handles.find((hd) => Math.hypot(hd.x - x, hd.y - y) <= 7 * Math.max(1, kpx));
+    $("preview").style.cursor = h ? (h.kind === "rotate" ? "grab" : "crosshair") : uiEd.model && uiEd.model.ui.layout === "free" ? "move" : "pointer";
+    return;
+  }
   const [x, y] = previewPoint(e);
+  if (drag.handle) {
+    dragHandle(drag, x, y, e.shiftKey);
+    drag.moved = true;
+    renderPreview();
+    return;
+  }
+  if (drag.shape) {
+    const snap = e.shiftKey ? 1 : 2;
+    const dx = Math.round((x - drag.x0) / snap) * snap, dy = Math.round((y - drag.y0) / snap) * snap;
+    Object.assign(drag.shape, { x: drag.start.x + dx, y: drag.start.y + dy });
+    if (drag.shape.type === "line") Object.assign(drag.shape, { x2: drag.start.x2 + dx, y2: drag.start.y2 + dy });
+    drag.moved = true;
+    renderPreview();
+    return;
+  }
+  if (drag.text) {
+    const snap = e.shiftKey ? 1 : 2;
+    uiEd.model.ui[drag.text] = [Math.max(0, Math.round((x - drag.dx) / snap) * snap), Math.max(0, Math.round((y - drag.dy) / snap) * snap)];
+    drag.moved = true;
+    renderPreview();
+    return;
+  }
   const [W, H] = freeBase();
   const [bw, bh] = freeBox(drag.p);
   const snap = e.shiftKey ? 1 : 2;

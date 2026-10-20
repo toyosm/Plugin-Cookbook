@@ -26,11 +26,13 @@ public:
           fControls(recipe::kAssets, recipe::kNumAssets)
     {
         const double scale = getScaleFactor();
-        if (Meta::kFreeLayout) // a fixed design: resize it, but keep its proportions
+        if (Meta::kFreeLayout || Meta::kPedal) // a fixed design: resize it, but keep its proportions
             setGeometryConstraints(Meta::kBaseWidth * 0.5 * scale, Meta::kBaseHeight * 0.5 * scale, true);
         else
             setGeometryConstraints(260 * scale, 180 * scale);
         cui::applyStyle(COOKBOOK_UI_ACCENT, COOKBOOK_UI_LIGHT, COOKBOOK_UI_BACKGROUND);
+        fControls.setTitles(DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE);
+        fControls.loadFonts(scale);
     }
 
     ~CookbookUI() override
@@ -68,10 +70,12 @@ protected:
                          ImGuiWindowFlags_NoBringToFrontOnFocus))
         {
             fControls.drawBackground(width, height);
-            if (!Meta::kFreeLayout) // a free layout's artwork carries its own title
+            if (!Meta::kFreeLayout && !Meta::kPedal) // free layouts and pedals carry their own title
                 cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE,
-                                COOKBOOK_UI_ACCENT, Meta::kTitleColor, Meta::kLabelColor);
-            fControls.draw(s, width, (cui::headerHeight(COOKBOOK_UI_SUBTITLE) + 8.f) * s, COOKBOOK_UI_ACCENT, *this,
+                                COOKBOOK_UI_ACCENT, Meta::kTitleColor, Meta::kLabelColor,
+                                fControls.font(Meta::kTitleFont), fControls.font(Meta::kLabelFont), Meta::kTitleExtra,
+                                ImVec2(Meta::kTitleX, Meta::kTitleY), ImVec2(Meta::kBrandX, Meta::kBrandY));
+            fControls.draw(s, width, (cui::headerHeight(COOKBOOK_UI_SUBTITLE) + Meta::kTitleExtra + 8.f) * s, COOKBOOK_UI_ACCENT, *this,
                            height);
             drawStandaloneStatus(s, height);
         }

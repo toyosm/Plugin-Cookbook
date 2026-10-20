@@ -552,12 +552,14 @@ public:
         const double s = getScaleFactor();
         Window::setTitle(DISTRHO_PLUGIN_NAME);
         Window::setResizable(true);
-        if (Meta::kFreeLayout)
+        if (Meta::kFreeLayout || Meta::kPedal)
             setGeometryConstraints(Meta::kBaseWidth * 0.5 * s, (Meta::kBaseHeight * 0.5 + kBarH) * s, true);
         else
             setGeometryConstraints(300 * s, (180 + kBarH) * s);
         setSize(DISTRHO_UI_DEFAULT_WIDTH * s, (DISTRHO_UI_DEFAULT_HEIGHT + kBarH) * s);
         cui::applyStyle(COOKBOOK_UI_ACCENT, COOKBOOK_UI_LIGHT, COOKBOOK_UI_BACKGROUND);
+        controls_.setTitles(DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE);
+        controls_.loadFonts(s);
         for (uint32_t i = 0; i < kNumParams; ++i)
             controls_.values[i] = host_.params[i].load();
         done();
@@ -582,20 +584,24 @@ protected:
                          ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse))
         {
-            const float top = (cui::headerHeight(COOKBOOK_UI_SUBTITLE) + 8.f) * s;
+            const float top = (cui::headerHeight(COOKBOOK_UI_SUBTITLE) + Meta::kTitleExtra + 8.f) * s;
             const float area = height - kBarH * s;
             if (showSettings_)
             {
                 cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE,
-                                COOKBOOK_UI_ACCENT, Meta::kTitleColor, Meta::kLabelColor);
+                                COOKBOOK_UI_ACCENT, Meta::kTitleColor, Meta::kLabelColor,
+                                controls_.font(Meta::kTitleFont), controls_.font(Meta::kLabelFont), Meta::kTitleExtra,
+                                ImVec2(Meta::kTitleX, Meta::kTitleY), ImVec2(Meta::kBrandX, Meta::kBrandY));
                 drawSettings(s, width, top, area);
             }
             else
             {
                 controls_.drawBackground(width, area);
-                if (!Meta::kFreeLayout)
+                if (!Meta::kFreeLayout && !Meta::kPedal)
                     cui::drawHeader(s, width, DISTRHO_PLUGIN_NAME, DISTRHO_PLUGIN_BRAND, COOKBOOK_UI_SUBTITLE,
-                                    COOKBOOK_UI_ACCENT, Meta::kTitleColor, Meta::kLabelColor);
+                                    COOKBOOK_UI_ACCENT, Meta::kTitleColor, Meta::kLabelColor,
+                                controls_.font(Meta::kTitleFont), controls_.font(Meta::kLabelFont), Meta::kTitleExtra,
+                                ImVec2(Meta::kTitleX, Meta::kTitleY), ImVec2(Meta::kBrandX, Meta::kBrandY));
                 controls_.draw(s, width, top, COOKBOOK_UI_ACCENT, *this, area);
             }
             drawBar(s, width, height);

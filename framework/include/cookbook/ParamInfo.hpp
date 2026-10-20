@@ -49,6 +49,15 @@ struct UiParam
     uint32_t frames;    // 1 = the image rotates; N = vertical (or horizontal) filmstrip of N frames
     int32_t labelColor; // 0xRRGGBB for the name, -1 = the theme's
     int32_t valueColor; // 0xRRGGBB for the value text, -1 = the theme's
+    int32_t labelFont;  // font slot (Meta::kFonts) for the name, -1 = the default font
+    int32_t valueFont;  // font slot for the value text
+};
+
+// A font the editor bakes: an embedded TTF/OTF (index into recipe::kAssets, -1 = DejaVu Sans) at a size.
+struct FontSlot
+{
+    int32_t asset;
+    float size; // px, before the display scale
 };
 
 // An image embedded in the plugin (PNG bytes).
@@ -57,6 +66,21 @@ struct Asset
     const char* name;
     const unsigned char* data;
     uint32_t size;
+};
+
+// A decoration drawn behind the controls. kind: 0 line (a, b = end point), 1 rect (a, b = size),
+// 2 circle (a = radius), 3 text (a = size). Coordinates in unscaled px from the window's top-left (pedal
+// and free layouts: from the design's top-left).
+struct UiShape
+{
+    int32_t kind;
+    float x, y, a, b;
+    int32_t stroke, fill; // 0xRRGGBB, -1 = none (text: stroke = its color, -1 = the theme's label color)
+    float width, radius;
+    const char* text;
+    int32_t font;         // text: font slot (Meta::kFonts)
+    float rotation;       // degrees, clockwise, around the shape's center
+    int32_t image;        // image: index into recipe::kAssets, -1 = none
 };
 
 // A section of the editor: an optional title and the parameters it shows, in order.

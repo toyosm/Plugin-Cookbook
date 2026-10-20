@@ -62,9 +62,24 @@ knob_style = "modern"            # optional: "modern" (default), "vintage" (crea
                                  #   "fluted" (black seven-lobed bakelite with a pale green line)
 knob_color = "#E8DCC0"           # optional: knob body color, overrides the style's
 knob_ticks = true                # optional: scale marks around the knobs (vintage always has them)
+style       = "flat"             # optional: "flat" (default) or "pedal" (a stompbox enclosure with the
+                                 #   plugin name printed large under the controls)
+pedal_color = "#2E6FD8"          # optional, pedal: the enclosure's paint (default: accent)
+pedal_width = 320                # optional, pedal: enclosure width in px (180-1600); rows wrap to fit and
+                                 #   the height follows. Default: as wide as the widest row
+pedal_switch = "on"              # optional, pedal: a bool (or two-option choice) parameter shown as a working
+                                 #   footswitch with an LED instead of in the rows (e.g. an On / Bypass param)
 title_color = "#F2E6D0"          # optional text colors: the plugin name,
 label_color = "#A89F91"          #   control names / group titles / brand / subtitle,
 value_color = "#FFFFFF"          #   and the values (each param can override label_color/value_color)
+title_size  = 28                 # optional text sizes in px (7-96): plugin name (default 19, 25 on a
+label_size  = 14                 #   pedal), control names / group titles / brand, values (default 13);
+value_size  = 12                 #   each param can override label_size / value_size
+title_font  = "Bebas Neue"       # optional font for the name; label_font and value_font likewise. Built-in:
+                                 #   "Bebas Neue", "Oswald", "Montserrat", "Russo One", "Orbitron"; or a
+                                 #   .ttf/.otf next to the recipe ("<id>/Font.ttf") when the user provides one
+title_pos   = [24, 12]           # optional: where the name (and brand) go, [x, y] px from the window's
+brand_pos   = [300, 18]          #   top-left; default: automatic
 # Image skins (only when the user provides PNG images; they live in plugins/<id>/ next to the recipe):
 # layout           = "free"                  # "flow" (default: rows/groups) or "free" (each control at x, y)
 # background_image = "<id>/panel.png"        # free: the window takes its size; flow: drawn behind, cropped
@@ -79,6 +94,19 @@ title   = "Tone"                 # optional ("" = no title)
 params  = ["drive", "tone"]      # symbols, in display order; each parameter in at most one group
 columns = 3                      # optional: overrides [ui].columns for this group
                                  # parameters left out of every group are shown at the end
+
+[[ui.shape]]                     # optional decorations behind the controls, px from the window's top-left
+type   = "rect"                  # "line" (x, y, x2, y2), "rect" (x, y, w, h, radius), "circle" (x, y = center, r),
+x      = 20                      #   "text" (x, y, text, size, font), "image" (x, y, w, h, image = "<id>/logo.png";
+                                 #   w and h default to the PNG's own size, or keep its proportions if only one is set)
+y      = 70
+w      = 200
+h      = 120
+color  = "#FFD27A"               # outline / line / text color, or "none"
+fill   = "#1E3F7A"               # rect and circle only, optional
+width  = 1.5                     # line thickness
+radius = 8
+rotation = 0                     # degrees, clockwise, around the shape's center (all but circle)
 
 [[param]]                        # one table per control, in display order (max 32)
 symbol       = "drive"           # C++ identifier: lowercase, digits, underscore; becomes p.drive
@@ -107,6 +135,9 @@ description  = "Tooltip text."   # optional but recommended
 # value = false                  # optional: show or hide its value text
 # label_color = "#FFD27A"        # optional: this control's name / value text color
 # value_color = "#FFFFFF"
+# label_size = 16                # optional: this control's name / value text size in px
+# value_size = 11
+# label_font = "Oswald"          # optional: this control's name / value font
 # knob_image = "<id>/big.png"    # optional, knobs only: its own image (and knob_frames)
 
 [dsp]

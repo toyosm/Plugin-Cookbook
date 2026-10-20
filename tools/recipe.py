@@ -121,11 +121,28 @@ THEMES = ("dark", "light")
 KNOB_STYLES = ("modern", "vintage", "flat", "minimal", "metal", "fluted")
 KNOB_CONTROLS = ("knob", "small-knob", "large-knob")
 LAYOUTS = ("flow", "free")
+STYLES = ("flat", "pedal")
+
+# Pedal style: a stompbox enclosure on a backdrop. Unscaled pixels; Controls.hpp and the Studio preview match.
+PEDAL_MARGIN = 24      # backdrop around the enclosure
+PEDAL_TOP = 20         # enclosure top edge to the first control
+PEDAL_BOTTOM = 124     # area under the controls with a footswitch: name, brand, LED and the switch
+PEDAL_BOTTOM_PLAIN = 72  # the same area without one: name and brand
+PEDAL_MIN_WIDTH = 180
 MAX_IMAGE_BYTES = 4_000_000
 
 # Free layout: default control box sizes (width, height) in unscaled pixels; knobs are square.
 PARAM_UI_KEYS = ("control", "knob_style", "x", "y", "size", "label", "value", "label_color", "value_color",
-                 "knob_image", "knob_frames")
+                 "label_size", "value_size", "label_font", "value_font", "knob_image", "knob_frames")
+
+# Text: the editor's base font is 13 px; the plugin name is drawn at 1.45x (1.9x on a pedal) unless sized.
+BASE_TEXT = 13.0
+TITLE_SCALE = {"flat": 1.45, "pedal": 1.9}
+FONT_SUFFIXES = (".ttf", ".otf")
+# Fonts a recipe can name without shipping a file (framework/fonts, SIL Open Font License).
+FONTS_DIR = ROOT / "framework" / "fonts"
+BUILTIN_FONTS = {"Bebas Neue": "BebasNeue.ttf", "Oswald": "Oswald.ttf", "Montserrat": "Montserrat.ttf",
+                 "Russo One": "RussoOne.ttf", "Orbitron": "Orbitron.ttf"}
 FREE_BOX = {"knob": (58, 58), "small-knob": (40, 40), "large-knob": (88, 88), "slider": (200, 20),
             "vslider": (24, 110), "number": (84, 22), "selector": (110, 110), "toggle": (46, 24),
             "button": (84, 30), "led": (22, 22), "footswitch": (56, 76), "lever": (28, 48), "checkbox": (22, 22),
@@ -183,6 +200,42 @@ class Param:
     knob_frames: int = 0
     label_color: int | None = None
     value_color: int | None = None
+    label_size: float | None = None
+    value_size: float | None = None
+    label_font: str = ""
+    value_font: str = ""
+
+
+@dataclass
+class Shape:
+    """A decoration drawn behind the controls: a line, rectangle, circle, piece of text or image."""
+    type: str
+    x: float
+    y: float
+    x2: float = 0.0       # line end
+    y2: float = 0.0
+    w: float = 0.0        # rect / image size
+    h: float = 0.0
+    r: float = 0.0        # circle radius
+    color: int | None = 0x8A8D93  # stroke, or the text's color; None = no stroke
+    fill: int | None = None
+    width: float = 1.5    # stroke thickness
+    radius: float = 0.0   # rect corner radius
+    text: str = ""
+    size: float = 13.0
+    font: str = ""
+    image: str = ""       # image: a PNG relative to the recipe
+    rotation: float = 0.0  # degrees, clockwise, around the shape's center
+
+
+SHAPE_TYPES = ("line", "rect", "circle", "text", "image")
+SHAPE_KEYS = {
+    "line": {"type", "x", "y", "x2", "y2", "color", "width", "rotation"},
+    "rect": {"type", "x", "y", "w", "h", "color", "fill", "width", "radius", "rotation"},
+    "circle": {"type", "x", "y", "r", "color", "fill", "width"},
+    "text": {"type", "x", "y", "text", "color", "size", "font", "rotation"},
+    "image": {"type", "x", "y", "w", "h", "image", "rotation"},
+}
 
 
 @dataclass
@@ -225,9 +278,22 @@ class Recipe:
     knob_frames: int
     free_size: tuple[int, int] | None  # [ui].size
     labels: bool
+    style: str
+    pedal_color: int | None
+    pedal_width: int | None
+    pedal_switch: str      # symbol of the bool (or two-option choice) parameter the footswitch toggles, "" = none
     title_color: int | None
     label_color: int | None
     value_color: int | None
+    title_size: float | None
+    label_size: float | None
+    value_size: float | None
+    title_font: str      # font files (relative to the recipe), "" = the built-in DejaVu Sans
+    label_font: str
+    value_font: str
+    title_pos: tuple[float, float] | None  # top-left of the plugin name in px; None = automatic
+    brand_pos: tuple[float, float] | None  # top-left of the brand (pedal: brand or subtitle line)
+    shapes: list[Shape]
     images: dict[str, tuple[int, int]]  # every referenced image -> (width, height) in pixels
     groups: list[UiGroup]  # as written in the recipe; empty = one untitled group with every parameter
     params: list[Param]
@@ -399,7 +465,9 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
     _check_keys(errors, "[ui]", ui, {"accent", "columns", "theme", "background", "subtitle", "knob_style",
                                      "knob_color", "knob_ticks", "layout", "background_image", "image_scale",
                                      "knob_image", "knob_frames", "size", "labels", "title_color", "label_color",
-                                     "value_color", "group"})
+                                     "value_color", "style", "pedal_color", "pedal_width", "pedal_switch",
+                                     "title_size", "label_size", "value_size", "title_font", "label_font",
+                                     "value_font", "title_pos", "brand_pos", "group", "shape"})
     accent_s = ui.get("accent", DEFAULT_ACCENT)
     if not isinstance(accent_s, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", accent_s):
         _err(errors, f"[ui].accent '{accent_s}': use a hex color like \"#E8A33D\"")
@@ -490,6 +558,125 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
             return None
         return int(v[1:], 16)
 
+    style = ui.get("style", "flat")
+    if style not in STYLES:
+        _err(errors, "[ui].style: \"flat\" (default) or \"pedal\" (a stompbox enclosure)")
+        style = "flat"
+    pedal_color = color("[ui]", ui, "pedal_color")
+    pedal_width = ui.get("pedal_width")
+    if pedal_width is not None and (not isinstance(pedal_width, int) or isinstance(pedal_width, bool)
+                                    or not PEDAL_MIN_WIDTH <= pedal_width <= 1600):
+        _err(errors, f"[ui].pedal_width: the enclosure's width in pixels, {PEDAL_MIN_WIDTH}-1600")
+        pedal_width = None
+    pedal_switch = ui.get("pedal_switch", "")
+    if not isinstance(pedal_switch, str):
+        _err(errors, "[ui].pedal_switch: the symbol of an on/off parameter")
+        pedal_switch = ""
+    if style == "pedal" and layout == "free":
+        warnings.append("[ui].style = \"pedal\" is ignored with layout = \"free\" (use a background image)")
+    def text_size(where: str, table: dict, key: str) -> float | None:
+        if key not in table:
+            return None
+        v = _num(errors, f"{where}.{key}", table[key])
+        if v is not None and not 7 <= v <= 96:
+            _err(errors, f"{where}.{key}: a text size in pixels, 7-96")
+            return None
+        return v
+
+    def font(where: str, value) -> str:
+        if isinstance(value, str) and value in BUILTIN_FONTS:
+            return value
+        if not isinstance(value, str) or not value.lower().endswith(FONT_SUFFIXES):
+            _err(errors, f"{where}: a built-in font ({', '.join(BUILTIN_FONTS)}) or a .ttf/.otf file next to the "
+                         f"recipe, like \"{pid or 'my-plugin'}/MyFont.ttf\"")
+            return ""
+        rel = Path(value)
+        if rel.is_absolute() or ".." in rel.parts:
+            _err(errors, f"{where}: '{value}' must be inside the recipe's folder")
+            return ""
+        f = path.parent / rel
+        if not f.exists():
+            _err(errors, f"{where}: {rel.name} not found (put it next to the recipe, e.g. plugins/<id>/{rel.name})")
+            return ""
+        head = f.read_bytes()[:4]
+        if head not in (b"\x00\x01\x00\x00", b"OTTO", b"true") or f.stat().st_size > MAX_IMAGE_BYTES:
+            _err(errors, f"{where}: {rel.name} is not a TrueType/OpenType font under 4 MB")
+            return ""
+        return value
+
+    title_size = text_size("[ui]", ui, "title_size")
+    label_size = text_size("[ui]", ui, "label_size")
+    value_size = text_size("[ui]", ui, "value_size")
+    title_font = font("[ui].title_font", ui["title_font"]) if "title_font" in ui else ""
+    label_font = font("[ui].label_font", ui["label_font"]) if "label_font" in ui else ""
+    value_font = font("[ui].value_font", ui["value_font"]) if "value_font" in ui else ""
+    def position(key: str) -> tuple[float, float] | None:
+        if key not in ui:
+            return None
+        v = ui[key]
+        if (not isinstance(v, list) or len(v) != 2
+                or not all(isinstance(n, (int, float)) and not isinstance(n, bool) and 0 <= n <= 4000 for n in v)):
+            _err(errors, f"[ui].{key}: [x, y] in pixels from the top-left of the window")
+            return None
+        return float(v[0]), float(v[1])
+
+    title_pos = position("title_pos")
+    brand_pos = position("brand_pos")
+
+    shapes: list[Shape] = []
+    raw_shapes = ui.get("shape", [])
+    if not isinstance(raw_shapes, list):
+        _err(errors, "[ui] shapes must be declared as [[ui.shape]] tables")
+        raw_shapes = []
+    for si, rs in enumerate(raw_shapes):
+        where = f"[[ui.shape]] #{si + 1}"
+        if not isinstance(rs, dict) or rs.get("type") not in SHAPE_TYPES:
+            _err(errors, f"{where}: type = one of {', '.join(repr(t) for t in SHAPE_TYPES)}")
+            continue
+        kind = rs["type"]
+        _check_keys(errors, where, rs, SHAPE_KEYS[kind])
+        sh = Shape(kind, 0.0, 0.0)
+        for key in ("x", "y", "x2", "y2", "w", "h", "r", "width", "radius", "size", "rotation"):
+            if key in rs:
+                v = _num(errors, f"{where}.{key}", rs[key])
+                if v is not None:
+                    setattr(sh, key, max(-4000.0, min(4000.0, v)))
+        for key in ("color", "fill"):
+            if key in rs:
+                v = rs[key]
+                if v == "none":
+                    setattr(sh, key, None)
+                elif isinstance(v, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
+                    setattr(sh, key, int(v[1:], 16))
+                else:
+                    _err(errors, f"{where}.{key}: a hex color like \"#FFFFFF\" or \"none\"")
+        if kind == "text":
+            sh.text = rs.get("text", "")
+            if not isinstance(sh.text, str) or not sh.text or len(sh.text) > 80:
+                _err(errors, f"{where}: text = \"...\" (1-80 characters)")
+                sh.text = "?"
+            if not 7 <= sh.size <= 96:
+                _err(errors, f"{where}.size: 7-96 px")
+            if "font" in rs:
+                sh.font = font(f"{where}.font", rs["font"])
+            if "color" not in rs:
+                sh.color = None  # the label color, decided when drawn
+        if kind == "image":
+            sh.image = image(f"{where}.image", rs.get("image"))
+            if sh.image:
+                # without w / h: the picture's own size; with one of them, its proportions
+                iw, ih = images[sh.image]
+                if "w" not in rs and "h" not in rs:
+                    sh.w, sh.h = -iw, -ih
+                elif "w" not in rs:
+                    sh.w = sh.h * iw / ih
+                elif "h" not in rs:
+                    sh.h = sh.w * ih / iw
+            if sh.w < 0:  # the picture's own size, over image_scale
+                sh.w, sh.h = round(-sh.w / image_scale, 1), round(-sh.h / image_scale, 1)
+            if sh.w == 0 or sh.h == 0:
+                _err(errors, f"{where}: w and h must not be 0")
+        shapes.append(sh)
     title_color = color("[ui]", ui, "title_color")
     label_color = color("[ui]", ui, "label_color")
     value_color = color("[ui]", ui, "value_color")
@@ -524,7 +711,8 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
         _check_keys(errors, where, rp, {"symbol", "name", "short_name", "type", "min", "max", "default", "unit",
                                          "scale", "smoothing_ms", "description", "choices", "control",
                                          "knob_style", "x", "y", "size", "label", "value", "knob_image",
-                                         "knob_frames", "label_color", "value_color"})
+                                         "knob_frames", "label_color", "value_color", "label_size", "value_size",
+                                         "label_font", "value_font"})
         sym = rp.get("symbol", "")
         where = f"[[param]] '{sym or idx + 1}'"
         if not isinstance(sym, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", sym):
@@ -669,6 +857,10 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
                     setattr(prm, key, rp[key])
         prm.label_color = color(where, rp, "label_color")
         prm.value_color = color(where, rp, "value_color")
+        prm.label_size = text_size(where, rp, "label_size")
+        prm.value_size = text_size(where, rp, "value_size")
+        prm.label_font = font(f"{where}.label_font", rp["label_font"]) if "label_font" in rp else ""
+        prm.value_font = font(f"{where}.value_font", rp["value_font"]) if "value_font" in rp else ""
         if "knob_image" in rp:
             if control not in KNOB_CONTROLS:
                 _err(errors, f"{where}: knob_image only applies to knob controls")
@@ -685,6 +877,15 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
     # [[ui.group]] (needs the parameter symbols)
     groups: list[UiGroup] = []
     index_of = {p.symbol: i for i, p in enumerate(params)}
+    if pedal_switch:
+        sw = params[index_of[pedal_switch]] if pedal_switch in index_of else None
+        if sw is None:
+            _err(errors, f"[ui].pedal_switch: no parameter with symbol '{pedal_switch}'")
+            pedal_switch = ""
+        elif not (sw.type == "bool" or (sw.type == "choice" and len(sw.choices) == 2)):
+            _err(errors, f"[ui].pedal_switch: '{pedal_switch}' must be a bool (or a two-option choice) parameter")
+            pedal_switch = ""
+        # (kept but unused while style = "flat")
     grouped: set[str] = set()
     for gi, rg in enumerate(raw_groups):
         where = f"[[ui.group]] #{gi + 1}"
@@ -715,7 +916,7 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
                 idxs.append(index_of[m])
         groups.append(UiGroup(title, gcols, idxs))
     if groups:
-        missing = [p.symbol for p in params if p.symbol not in grouped]
+        missing = [p.symbol for p in params if p.symbol not in grouped and p.symbol != pedal_switch]
         if missing:
             warnings.append(f"[[ui.group]]: {', '.join(missing)} not in any group; shown at the end")
 
@@ -749,7 +950,11 @@ def load_recipe_text(text: str, path: Path) -> Recipe:
                     accent=accent, columns=columns, columns_set="columns" in ui, theme=theme, background=background, subtitle=subtitle,
                     knob_style=knob_style, knob_color=knob_color, knob_ticks=knob_ticks, layout=layout,
                     background_image=background_image, image_scale=image_scale, knob_image=knob_image,
-                    knob_frames=knob_frames, free_size=free_size, labels=labels, title_color=title_color,
+                    knob_frames=knob_frames, free_size=free_size, labels=labels, style=style,
+                    pedal_color=pedal_color, pedal_width=pedal_width, pedal_switch=pedal_switch,
+                    title_color=title_color, title_size=title_size, label_size=label_size,
+                    value_size=value_size, title_font=title_font, label_font=label_font, value_font=value_font,
+                    title_pos=title_pos, brand_pos=brand_pos, shapes=shapes,
                     label_color=label_color, value_color=value_color, images=images,
                     groups=groups, params=params, code=code, code_path=code_path,
                     code_line=code_line, warnings=warnings)
@@ -889,13 +1094,23 @@ def cell_size(p: Param) -> tuple[int, int]:
     return UI_CELL[p.control]
 
 
+def switch_index(r: Recipe) -> int:
+    """The parameter a pedal's footswitch toggles (drawn as the switch, not in the rows), or -1."""
+    if not (r.style == "pedal" and r.layout == "flow" and r.pedal_switch):
+        return -1
+    return next(i for i, p in enumerate(r.params) if p.symbol == r.pedal_switch)
+
+
 def layout_rows(r: Recipe, g: UiGroup, avail: float) -> list[list[int]]:
     """Greedy rows: a row ends at the group's column limit or when the next control doesn't fit."""
     cols = g.columns or default_columns(r)
     rows: list[list[int]] = []
     row: list[int] = []
     row_w = 0
+    skip = switch_index(r)
     for i in g.params:
+        if i == skip:
+            continue
         w = cell_size(r.params[i])[0]
         if row and (len(row) >= cols or row_w + w > avail):
             rows.append(row)
@@ -946,26 +1161,67 @@ def free_base_size(r: Recipe) -> tuple[int, int]:
     return round(w / r.image_scale), round(h / r.image_scale)
 
 
+def label_extra(r: Recipe) -> float:
+    """Extra room above each control when the names are larger than the base text."""
+    return max(0.0, (r.label_size or BASE_TEXT) - BASE_TEXT)
+
+
+def title_extra(r: Recipe) -> float:
+    """Extra room for a plugin name larger than its default size."""
+    default = BASE_TEXT * TITLE_SCALE["pedal" if is_pedal(r) else "flat"]
+    return max(0.0, (r.title_size or default) - default)
+
+
+def natural_width(r: Recipe) -> float:
+    """Width of the widest row when nothing limits the width (groups' own column limits still apply)."""
+    return max((sum(cell_size(r.params[i])[0] for i in row)
+                for g in effective_groups(r) for row in layout_rows(r, g, float("inf"))), default=0)
+
+
+def flow_height(r: Recipe, width: float) -> float:
+    """Height of the groups (titles, rows, gaps between groups) laid out in `width`, controls only."""
+    height = 0.0
+    for g in effective_groups(r):
+        rows = layout_rows(r, g, width - 2 * UI_PAD)
+        if not rows:
+            continue
+        if g.title:
+            height += UI_TITLE_H
+        for row in rows:
+            height += max(cell_size(r.params[i])[1] for i in row) + label_extra(r)
+        height += UI_GROUP_GAP
+    return max(0.0, height - UI_GROUP_GAP)
+
+
+def is_pedal(r: Recipe) -> bool:
+    return r.style == "pedal" and r.layout == "flow"
+
+
+def pedal_geometry(r: Recipe) -> tuple[int, int]:
+    """Enclosure (width, height): the width is pedal_width or what the widest row needs; rows wrap to fit."""
+    width = r.pedal_width or max(PEDAL_MIN_WIDTH, round(natural_width(r) + 2 * UI_PAD))
+    bottom = (PEDAL_BOTTOM if switch_index(r) >= 0 else PEDAL_BOTTOM_PLAIN) + title_extra(r)
+    return width, round(PEDAL_TOP + flow_height(r, width) + bottom)
+
+
+def pedal_text_colors(r: Recipe) -> tuple[int, int, int]:
+    """Title, label and value colors that read on the enclosure's paint."""
+    paint = r.pedal_color if r.pedal_color is not None else r.accent
+    lum = 0.2126 * (paint >> 16 & 255) + 0.7152 * (paint >> 8 & 255) + 0.0722 * (paint & 255)
+    return (0x1A1A1A, 0x3B3631, 0x1A1A1A) if lum > 140 else (0xF4F1EA, 0xD8D2C6, 0xFFFFFF)
+
+
 def ui_size(r: Recipe) -> tuple[int, int, int]:
     if r.layout == "free":
         w, h = free_base_size(r)
         return w, h, default_columns(r)
-    groups = effective_groups(r)
-    header = UI_HEADER_H + (UI_SUBTITLE_H if r.subtitle else 0)
-    natural = max((sum(cell_size(r.params[i])[0] for i in row)
-                   for g in groups for row in layout_rows(r, g, float("inf"))), default=0)
-    width = max(UI_MIN_WIDTH, natural + 2 * UI_PAD)
-    height = header + 8
-    for g in groups:
-        if not g.params:
-            continue
-        if g.title:
-            height += UI_TITLE_H
-        for row in layout_rows(r, g, width - 2 * UI_PAD):
-            height += max(cell_size(r.params[i])[1] for i in row)
-        height += UI_GROUP_GAP
-    height += UI_BOTTOM - UI_GROUP_GAP
-    return width, height, default_columns(r)
+    if is_pedal(r):
+        ew, eh = pedal_geometry(r)
+        return ew + 2 * PEDAL_MARGIN, eh + 2 * PEDAL_MARGIN, default_columns(r)
+    header = UI_HEADER_H + (UI_SUBTITLE_H if r.subtitle else 0) + title_extra(r)
+    width = max(UI_MIN_WIDTH, natural_width(r) + 2 * UI_PAD)
+    height = header + 8 + flow_height(r, width) + UI_BOTTOM
+    return round(width), round(height), default_columns(r)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1002,11 +1258,27 @@ def ui_model(r: Recipe) -> dict:
             "knob_frames": r.knob_frames,
             "size": list(r.free_size) if r.free_size else None,
             "labels": r.labels,
+            "style": r.style,
+            "pedal_color": _hex(r.pedal_color),
+            "pedal_width": r.pedal_width,
+            "pedal_switch": r.pedal_switch,
+            "title_size": r.title_size,
+            "label_size": r.label_size,
+            "value_size": r.value_size,
+            "title_font": r.title_font,
+            "label_font": r.label_font,
+            "value_font": r.value_font,
+            "title_pos": list(r.title_pos) if r.title_pos else None,
+            "brand_pos": list(r.brand_pos) if r.brand_pos else None,
             "title_color": _hex(r.title_color),
             "label_color": _hex(r.label_color),
             "value_color": _hex(r.value_color),
         },
         "images": {k: list(v) for k, v in r.images.items()},
+        "shapes": [{"type": sh.type, "x": sh.x, "y": sh.y, "x2": sh.x2, "y2": sh.y2, "w": sh.w, "h": sh.h, "r": sh.r,
+                    "color": _hex(sh.color), "fill": _hex(sh.fill), "width": sh.width, "radius": sh.radius,
+                    "text": sh.text, "size": sh.size, "font": sh.font, "image": sh.image, "rotation": sh.rotation}
+                   for sh in r.shapes],
         "groups": [{"title": g.title, "columns": g.columns, "params": [r.params[i].symbol for i in g.params]}
                    for g in effective_groups(r) if g.params],
         "params": [{"symbol": p.symbol, "name": p.name, "short_name": p.short_name, "type": p.type, "min": p.min,
@@ -1014,14 +1286,20 @@ def ui_model(r: Recipe) -> dict:
                     "control": p.control, "knob_style": p.knob_style, "description": p.description,
                     "x": p.x, "y": p.y, "size": p.size, "label": p.label, "value": p.value,
                     "knob_image": p.knob_image, "knob_frames": p.knob_frames,
-                    "label_color": _hex(p.label_color), "value_color": _hex(p.value_color)}
+                    "label_color": _hex(p.label_color), "value_color": _hex(p.value_color),
+                    "label_size": p.label_size, "value_size": p.value_size,
+                    "label_font": p.label_font, "value_font": p.value_font}
                    for p in r.params],
         "controls": CONTROLS,
         "switch_controls": SWITCH_CONTROLS,
         "knob_styles": KNOB_STYLES,
+        "builtin_fonts": list(BUILTIN_FONTS),
         "geometry": {"pad": UI_PAD, "header": UI_HEADER_H, "subtitle": UI_SUBTITLE_H, "title": UI_TITLE_H,
                      "gap": UI_GROUP_GAP, "bottom": UI_BOTTOM, "min_width": UI_MIN_WIDTH, "cells": UI_CELL,
-                     "free_box": FREE_BOX},
+                     "base_text": BASE_TEXT, "title_scale": TITLE_SCALE,
+                     "free_box": FREE_BOX, "pedal": {"margin": PEDAL_MARGIN, "top": PEDAL_TOP,
+                                                      "bottom": PEDAL_BOTTOM, "bottom_plain": PEDAL_BOTTOM_PLAIN,
+                                                      "min_width": PEDAL_MIN_WIDTH}},
     }
 
 
@@ -1061,7 +1339,7 @@ def apply_ui(text: str, ui: dict) -> str:
     tables = _toml_tables(lines)
     keep = [True] * len(lines)
     for n, (start, name) in enumerate(tables):
-        if name in ("[ui", "[[ui.group"):
+        if name in ("[ui", "[[ui.group", "[[ui.shape"):
             end = tables[n + 1][0] if n + 1 < len(tables) else len(lines)
             # comments right above the next table belong to it
             while end - 1 > start and (not lines[end - 1].strip() or lines[end - 1].lstrip().startswith("#")):
@@ -1089,6 +1367,10 @@ def apply_ui(text: str, ui: dict) -> str:
             "value": prm.get("value"),
             "label_color": prm.get("label_color") or None,
             "value_color": prm.get("value_color") or None,
+            "label_size": num(prm.get("label_size")) if prm.get("label_size") else None,
+            "value_size": num(prm.get("value_size")) if prm.get("value_size") else None,
+            "label_font": prm.get("label_font") or None,
+            "value_font": prm.get("value_font") or None,
             "knob_image": (prm.get("knob_image") or None) if is_knob else None,
             "knob_frames": (prm.get("knob_frames") or None) if is_knob else None,
         }
@@ -1173,9 +1455,25 @@ def apply_ui(text: str, ui: dict) -> str:
         entries.append(("size", f"[{int(u['size'][0])}, {int(u['size'][1])}]"))
     if u.get("labels") is False:
         entries.append(("labels", "false"))
-    for key in ("title_color", "label_color", "value_color"):
+    if u.get("style", "flat") != "flat":
+        entries.append(("style", _toml_str(u["style"])))
+    # pedal settings are kept while the style is flat, so switching back restores them
+    if u.get("pedal_color"):
+        entries.append(("pedal_color", _toml_str(u["pedal_color"])))
+    if u.get("pedal_width"):
+        entries.append(("pedal_width", str(int(u["pedal_width"]))))
+    if u.get("pedal_switch"):
+        entries.append(("pedal_switch", _toml_str(u["pedal_switch"])))
+    for key in ("title_color", "label_color", "value_color", "title_font", "label_font", "value_font"):
         if u.get(key):
             entries.append((key, _toml_str(u[key])))
+    for key in ("title_size", "label_size", "value_size"):
+        if u.get(key):
+            v = float(u[key])
+            entries.append((key, str(int(v)) if v.is_integer() else str(round(v, 1))))
+    for key in ("title_pos", "brand_pos"):
+        if u.get(key):
+            entries.append((key, f"[{round(float(u[key][0]))}, {round(float(u[key][1]))}]"))
     width = max(len(k) for k, _ in entries)
     block = ["[ui]"] + [f"{k.ljust(width)} = {v}" for k, v in entries] + [""]
 
@@ -1192,6 +1490,35 @@ def apply_ui(text: str, ui: dict) -> str:
             if g.get("columns"):
                 block.append(f'columns = {int(g["columns"])}')
             block.append("")
+
+    def num_s(v) -> str:
+        v = float(v)
+        return str(int(v)) if v.is_integer() else str(round(v, 1))
+
+    shape_defaults = {"width": 1.5, "radius": 0, "size": 13, "rotation": 0}
+    for sh in ui.get("shapes", []):
+        kind = sh.get("type")
+        if kind not in SHAPE_KEYS:
+            continue
+        block.append("[[ui.shape]]")
+        block.append(f'type = {_toml_str(kind)}')
+        for key in ("x", "y", "x2", "y2", "w", "h", "r", "width", "radius", "size", "rotation"):
+            if key in SHAPE_KEYS[kind] and sh.get(key) is not None and not (key in shape_defaults and float(sh[key]) == shape_defaults[key]):
+                block.append(f"{key} = {num_s(sh[key])}")
+        if kind == "text":
+            block.append(f"text = {_toml_str(sh.get('text') or '?')}")
+            if sh.get("font"):
+                block.append(f"font = {_toml_str(sh['font'])}")
+        if kind == "image":
+            block.append(f"image = {_toml_str(sh.get('image') or '')}")
+        for key in ("color", "fill"):
+            if key in SHAPE_KEYS[kind]:
+                v = sh.get(key)
+                if v:
+                    block.append(f"{key} = {_toml_str(v)}")
+                elif key == "color" and kind != "text":
+                    block.append('color = "none"')
+        block.append("")
 
     tables = _toml_tables(lines)
     at = next((i for i, name in tables if name == "[[param"), None)
@@ -1334,9 +1661,52 @@ def gen_meta(r: Recipe) -> str:
     out.append(f"    static constexpr int64_t kKnobColor = {knob_color}; // knob body color, -1 = the style's own")
     out.append(f"    static constexpr bool kKnobTicks = {'true' if r.knob_ticks else 'false'};")
     cc = lambda v: f"0x{v:06X}" if v is not None else "-1"
+    # text on a pedal's paint defaults to colors that read on it
+    dflt = pedal_text_colors(r) if is_pedal(r) else (None, None, None)
+    title_c = r.title_color if r.title_color is not None else dflt[0]
+    label_c = r.label_color if r.label_color is not None else dflt[1]
+    value_c = r.value_color if r.value_color is not None else dflt[2]
     out.append(f"    // text colors (0xRRGGBB, -1 = the theme's): plugin name, labels (names, group titles, brand), values")
-    out.append(f"    static constexpr int32_t kTitleColor = {cc(r.title_color)}, kLabelColor = {cc(r.label_color)}, "
-               f"kValueColor = {cc(r.value_color)};")
+    out.append(f"    static constexpr int32_t kTitleColor = {cc(title_c)}, kLabelColor = {cc(label_c)}, "
+               f"kValueColor = {cc(value_c)};")
+    pw, ph = pedal_geometry(r) if is_pedal(r) else (0, 0)
+    paint = r.pedal_color if r.pedal_color is not None else r.accent
+    out.append(f"    static constexpr bool kPedal = {'true' if is_pedal(r) else 'false'}; // stompbox enclosure style")
+    out.append(f"    static constexpr uint32_t kPedalColor = 0x{paint:06X};")
+    out.append(f"    static constexpr float kPedalWidth = {c_float(pw)}, kPedalHeight = {c_float(ph)};")
+    out.append(f"    static constexpr int32_t kPedalSwitch = {switch_index(r)}; // parameter the footswitch toggles, -1 = none")
+    slots, roles = font_slots(r)
+    out.append("    // fonts baked for the editor: { asset index (-1 = DejaVu Sans), size in px }")
+    out.append(f"    static constexpr uint32_t kNumFonts = {len(slots)};")
+    out.append(f"    static constexpr cookbook::FontSlot kFonts[{max(1, len(slots))}] = {{")
+    out += [f"        {{ {a}, {c_float(sz)} }}," for a, sz in slots] or ["        { -1, 13.f },"]
+    out.append("    };")
+    out.append(f"    static constexpr int32_t kTitleFont = {roles['title']}, kLabelFont = {roles['label']}, "
+               f"kValueFont = {roles['value']}; // slots, -1 = default")
+    out.append(f"    static constexpr float kLabelExtra = {c_float(round(label_extra(r), 2))}, "
+               f"kTitleExtra = {c_float(round(title_extra(r), 2))};")
+    kinds = {"line": 0, "rect": 1, "circle": 2, "text": 3, "image": 4}
+    out.append("    // decorations drawn behind the controls: { kind (0 line, 1 rect, 2 circle, 3 text, 4 image), x, y, a, b,")
+    out.append("    //   stroke, fill, width, radius, text, font slot, rotation in degrees, image index }; a, b = line end /")
+    out.append("    //   rect or image size / circle radius / text size")
+    out.append(f"    static constexpr uint32_t kNumShapes = {len(r.shapes)};")
+    out.append(f"    static constexpr cookbook::UiShape kShapes[{max(1, len(r.shapes))}] = {{")
+    if not r.shapes:
+        out.append('        { 0, 0.f, 0.f, 0.f, 0.f, -1, -1, 0.f, 0.f, "", -1, 0.f, -1 },')
+    for si, sh in enumerate(r.shapes):
+        a, b = {"line": (sh.x2, sh.y2), "rect": (sh.w, sh.h), "circle": (sh.r, 0.0), "text": (sh.size, 0.0),
+                "image": (sh.w, sh.h)}[sh.type]
+        stroke = sh.color if sh.color is not None else (label_c if sh.type == "text" and label_c is not None else -1)
+        out.append(f"        {{ {kinds[sh.type]}, {c_float(sh.x)}, {c_float(sh.y)}, {c_float(a)}, {c_float(b)}, "
+                   f"{cc(stroke) if stroke != -1 else -1}, {cc(sh.fill)}, {c_float(sh.width)}, {c_float(sh.radius)}, "
+                   f"{c_str(sh.text)}, {roles['shapes'][si]}, {c_float(sh.rotation)}, "
+                   f"{sorted(r.images).index(sh.image) if sh.image else -1} }},")
+    out.append("    };")
+    tx, ty = r.title_pos or (-1, -1)
+    bx, by = r.brand_pos or (-1, -1)
+    out.append(f"    // name / brand top-left in px (-1 = automatic)")
+    out.append(f"    static constexpr float kTitleX = {c_float(tx)}, kTitleY = {c_float(ty)}, "
+               f"kBrandX = {c_float(bx)}, kBrandY = {c_float(by)};")
     out.append("")
     images = sorted(r.images)
     base_w, base_h = free_base_size(r) if r.layout == "free" else ui_size(r)[:2]
@@ -1348,17 +1718,18 @@ def gen_meta(r: Recipe) -> str:
     out.append("    // free layout boxes (x, y, w, h), label/value visibility, knob image index and frames")
     out.append(f"    static constexpr cookbook::UiParam kUiParams[{max(1, n)}] = {{")
     if n == 0:
-        out.append("        { 0.f, 0.f, 0.f, 0.f, false, false, -1, 1, -1, -1 },")
-    for p in r.params:
+        out.append("        { 0.f, 0.f, 0.f, 0.f, false, false, -1, 1, -1, -1, -1, -1 },")
+    for pi, p in enumerate(r.params):
         img, frames = knob_image_of(r, p)
         w, h = free_box(r, p) if r.layout == "free" else (0.0, 0.0)
+        lab_slot, val_slot = roles["params"][pi]
         show_label = p.label if p.label is not None else r.labels
         show_value = p.value if p.value is not None else r.labels
         out.append(f"        {{ {c_float(p.x or 0)}, {c_float(p.y or 0)}, {c_float(w)}, {c_float(h)}, "
                    f"{'true' if show_label else 'false'}, {'true' if show_value else 'false'}, "
                    f"{images.index(img) if img else -1}, {frames}, "
-                   f"{cc(p.label_color if p.label_color is not None else r.label_color)}, "
-                   f"{cc(p.value_color if p.value_color is not None else r.value_color)} }}, // {p.symbol}")
+                   f"{cc(p.label_color if p.label_color is not None else label_c)}, "
+                   f"{cc(p.value_color if p.value_color is not None else value_c)}, {lab_slot}, {val_slot} }}, // {p.symbol}")
     out.append("    };")
     out.append(f"    static constexpr cookbook::UiGroup kGroups[{len(groups)}] = {{")
     for gi, g in enumerate(groups):
@@ -1441,13 +1812,61 @@ def write_if_changed(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def font_files(r: Recipe) -> list[str]:
+    used = ({r.title_font, r.label_font, r.value_font} | {p.label_font for p in r.params}
+            | {p.value_font for p in r.params} | {sh.font for sh in r.shapes if sh.type == "text"})
+    return sorted(f for f in used if f)
+
+
+def font_path(r: Recipe, font: str) -> Path:
+    """A font as written in the recipe: a built-in name, or a file relative to the recipe."""
+    return FONTS_DIR / BUILTIN_FONTS[font] if font in BUILTIN_FONTS else r.path.parent / font
+
+
+def asset_names(r: Recipe) -> list[str]:
+    """Embedded files: images first (sorted), then fonts; indices into recipe::kAssets."""
+    return sorted(r.images) + font_files(r)
+
+
+def font_slots(r: Recipe) -> tuple[list[tuple[int, float]], dict]:
+    """The (asset index or -1 for DejaVu Sans, pixel size) pairs the editor bakes, and which slot each text
+    role and each parameter's name/value uses (-1 = the default font at the default size)."""
+    names = asset_names(r)
+    slots: list[tuple[int, float]] = []
+
+    def slot(font_file: str, size: float | None, sized: bool) -> int:
+        if not font_file and not sized:
+            return -1
+        key = (names.index(font_file) if font_file else -1, float(size))
+        if key not in slots:
+            slots.append(key)
+        return slots.index(key)
+
+    title_default = BASE_TEXT * TITLE_SCALE["pedal" if is_pedal(r) else "flat"]
+    roles = {
+        "title": slot(r.title_font, r.title_size or title_default, r.title_size is not None),
+        "label": slot(r.label_font, r.label_size or BASE_TEXT, r.label_size is not None),
+        "value": slot(r.value_font, r.value_size or BASE_TEXT, r.value_size is not None),
+        "params": [],
+    }
+    for p in r.params:
+        lab = (slot(p.label_font or r.label_font, p.label_size or r.label_size or BASE_TEXT, True)
+               if p.label_size is not None or p.label_font else roles["label"])
+        val = (slot(p.value_font or r.value_font, p.value_size or r.value_size or BASE_TEXT, True)
+               if p.value_size is not None or p.value_font else roles["value"])
+        roles["params"].append((lab, val))
+    roles["shapes"] = [slot(sh.font, sh.size, True) if sh.type == "text" else -1 for sh in r.shapes]
+    return slots, roles
+
+
 def gen_assets(r: Recipe) -> str:
-    """The recipe's images as byte arrays (PNG, decoded at runtime). Only the editor includes this."""
+    """The recipe's images (PNG) and fonts (TTF/OTF) as byte arrays. Only the editor includes this."""
     out = ["// Generated by tools/recipe.py from " + r.path.name + " — do not edit.", "#pragma once", "",
            '#include "cookbook/ParamInfo.hpp"', "", "namespace recipe {", ""]
-    names = sorted(r.images)
+    names = asset_names(r)
+    fonts = set(font_files(r))
     for i, name in enumerate(names):
-        data = (r.path.parent / name).read_bytes()
+        data = (font_path(r, name) if name in fonts else r.path.parent / name).read_bytes()
         out.append(f"// {name}")
         out.append(f"static const unsigned char kAssetData{i}[{len(data)}] = {{")
         for k in range(0, len(data), 32):
@@ -1637,7 +2056,8 @@ def cmd_generate(args) -> int:
     listing += [")", "set(COOKBOOK_RECIPE_FILES"]
     listing += [f'  "{r.path.resolve().as_posix()}"' for r in recipes]
     listing += [f'  "{r.code_path.resolve().as_posix()}"' for r in recipes if r.code_path != r.path]
-    listing += [f'  "{(r.path.parent / img).resolve().as_posix()}"' for r in recipes for img in sorted(r.images)]
+    listing += [f'  "{(r.path.parent / f).resolve().as_posix()}"' for r in recipes for f in sorted(r.images)]
+    listing += [f'  "{font_path(r, f).resolve().as_posix()}"' for r in recipes for f in font_files(r)]
     listing += [")"]
     for r in recipes:
         cm = lambda v: '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'

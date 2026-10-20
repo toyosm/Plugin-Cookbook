@@ -16,6 +16,7 @@
 
 #include "DearImGui.hpp"
 #include "OpenGL-include.hpp"
+#include "src/Resources.hpp" // DPF's DejaVu Sans, baked at other sizes for sized text
 
 #include "cookbook/ParamInfo.hpp"
 
@@ -43,6 +44,11 @@ constexpr float kGroupGap = 6.f;
 constexpr float kCellW = 118.f;
 constexpr float kCellH = 132.f;
 constexpr float kKnobSize = 58.f;
+// pedal style: backdrop margin, enclosure top edge to the controls, area under them (name, LED, footswitch)
+constexpr float kPedalMargin = 24.f;
+constexpr float kPedalTop = 20.f;
+constexpr float kPedalBottom = 124.f;      // with a footswitch
+constexpr float kPedalBottomPlain = 72.f;  // without one
 
 inline float headerHeight(const char* subtitle)
 {
@@ -150,6 +156,24 @@ inline void formatValue(const ParamInfo& p, float v, char* buf, size_t size)
             std::snprintf(buf, size, "%.*f", decimals, v);
     }
 }
+
+// Pushes a font for the lifetime of the scope (nothing when the font is null: the default font stays).
+struct FontScope
+{
+    explicit FontScope(ImFont* f) : pushed(f != nullptr)
+    {
+        if (pushed)
+            ImGui::PushFont(f);
+    }
+    ~FontScope()
+    {
+        if (pushed)
+            ImGui::PopFont();
+    }
+    FontScope(const FontScope&) = delete;
+    FontScope& operator=(const FontScope&) = delete;
+    bool pushed;
+};
 
 inline void centeredText(const char* text, float cellX, float cellW, const ImVec4& color)
 {
@@ -388,30 +412,41 @@ inline ImVec4 textColor(int32_t custom, const ImVec4& theme)
 
 // Plugin name on the left, brand on the right, optional subtitle under the name, accent rule underneath.
 // titleColor colors the name; labelColor the brand and subtitle (0xRRGGBB, -1 = the theme's).
+// titleFont/labelFont: baked fonts for a sized or custom title / brand and subtitle (null = the default
+// font; the title then draws at 1.45x). titleExtra: room added under a title larger than its default.
+// titlePos/brandPos: top-left in unscaled px, or x < 0 for the automatic place (the subtitle follows the title).
 inline void drawHeader(float s, float width, const char* name, const char* brand, const char* subtitle,
-                       uint32_t accentRgb, int32_t titleColor = -1, int32_t labelColor = -1)
+                       uint32_t accentRgb, int32_t titleColor = -1, int32_t labelColor = -1,
+                       ImFont* titleFont = nullptr, ImFont* labelFont = nullptr, float titleExtra = 0.f,
+                       ImVec2 titlePos = ImVec2(-1.f, -1.f), ImVec2 brandPos = ImVec2(-1.f, -1.f))
 {
     const ImVec4 accent = rgb(accentRgb);
     const ImVec4 muted = textColor(labelColor, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    const ImVec2 tp = titlePos.x >= 0.f ? titlePos : ImVec2(kPad, 14.f);
 
-    ImGui::SetCursorPos(ImVec2(kPad * s, 14.f * s));
-    ImGui::SetWindowFontScale(1.45f);
-    ImGui::TextColored(textColor(titleColor, ImGui::GetStyle().Colors[ImGuiCol_Text]), "%s", name);
-    ImGui::SetWindowFontScale(1.f);
+    ImGui::SetCursorPos(ImVec2(tp.x * s, tp.y * s));
+    {
+        FontScope font(titleFont);
+        if (!titleFont)
+            ImGui::SetWindowFontScale(1.45f);
+        ImGui::TextColored(textColor(titleColor, ImGui::GetStyle().Colors[ImGuiCol_Text]), "%s", name);
+        ImGui::SetWindowFontScale(1.f);
+    }
 
+    FontScope font(labelFont);
     const float bw = ImGui::CalcTextSize(brand).x;
-    ImGui::SetCursorPos(ImVec2(width - kPad * s - bw, 20.f * s));
+    ImGui::SetCursorPos(brandPos.x >= 0.f ? ImVec2(brandPos.x * s, brandPos.y * s) : ImVec2(width - kPad * s - bw, 20.f * s));
     ImGui::TextColored(muted, "%s", brand);
 
     if (subtitle && subtitle[0])
     {
-        ImGui::SetCursorPos(ImVec2(kPad * s, 38.f * s));
+        ImGui::SetCursorPos(ImVec2(tp.x * s, (tp.y + 24.f + titleExtra) * s));
         ImGui::TextColored(muted, "%s", subtitle);
     }
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 wp = ImGui::GetWindowPos();
-    const float y = wp.y + (headerHeight(subtitle) - 8.f) * s;
+    const float y = wp.y + (headerHeight(subtitle) + titleExtra - 8.f) * s;
     dl->AddLine(ImVec2(wp.x + kPad * s, y), ImVec2(wp.x + width - kPad * s, y),
                 ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, 0.55f)), 1.f * s);
 }
@@ -458,6 +493,21 @@ struct ControlsHost
     virtual void setValue(uint32_t index, float value) = 0;
     virtual void endEdit(uint32_t index) = 0;
 };
+
+// A round metal footswitch (the footswitch control, and the pedal style's decoration).
+inline void drawMetalSwitch(ImDrawList* dl, ImVec2 c, float r, bool hovered, bool pressed)
+{
+    const ImVec4 metal = rgb(0xb4b8bf);
+    dl->AddCircleFilled(c, r, ImGui::GetColorU32(darken(metal, 0.6f)), 32);
+    dl->AddCircleFilled(c, r * 0.86f, ImGui::GetColorU32(darken(metal, 0.3f)), 32);
+    const float press = pressed ? 0.06f : 0.f;
+    for (int k = 0; k <= 6; ++k)
+    {
+        const float f = k / 6.f;
+        dl->AddCircleFilled(ImVec2(c.x - r * 0.08f * f, c.y - r * 0.08f * f + r * press), r * (0.7f - 0.3f * f),
+                            ImGui::GetColorU32(lighten(darken(metal, 0.2f - 0.2f * f), 0.4f * f + (hovered ? 0.08f : 0.f))), 28);
+    }
+}
 
 // Number of positions of a stepped parameter (choice, or int min..max).
 inline uint32_t stepCount(const ParamInfo& p)
@@ -621,13 +671,49 @@ public:
     float values[kSize];
 
     explicit ControlsView(const Asset* assets = nullptr, uint32_t numAssets = 0)
-        : images_(assets, numAssets)
+        : images_(assets, numAssets), assets_(assets), numAssets_(numAssets)
     {
         for (uint32_t i = 0; i < Meta::kNumParams; ++i)
             values[i] = Meta::kParams[i].def;
     }
 
     void releaseImages() { images_.release(); }
+
+    // Bakes the recipe's sized and custom fonts (Meta::kFonts) into ImGui's atlas. Call once from the
+    // editor's constructor: fonts can't be added once frames are being drawn. dpiScale = display scale.
+    void loadFonts(const float dpiScale)
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        for (uint32_t k = 0; k < Meta::kNumFonts && k < kMaxFonts; ++k)
+        {
+            const FontSlot& f = Meta::kFonts[k];
+            const void* data = dpf_resources::dejavusans_ttf;
+            int size = (int)dpf_resources::dejavusans_ttf_size;
+            if (f.asset >= 0 && (uint32_t)f.asset < numAssets_)
+            {
+                data = assets_[f.asset].data;
+                size = (int)assets_[f.asset].size;
+            }
+            ImFontConfig fc;
+            fc.FontDataOwnedByAtlas = false; // the data is static, compiled into the plugin
+            fc.OversampleH = 2;
+            fc.OversampleV = 1;
+            fonts_[k] = io.Fonts->AddFontFromMemoryTTF(const_cast<void*>(data), size,
+                                                       std::max(6.f, f.size * dpiScale), &fc);
+        }
+    }
+
+    // A baked font slot (Meta::kTitleFont, kLabelFont, kValueFont, UiParam::labelFont/valueFont), or null.
+    ImFont* font(const int32_t slot) const
+    {
+        return slot >= 0 && (uint32_t)slot < kMaxFonts ? fonts_[slot] : nullptr;
+    }
+
+    // The pedal style prints these on the enclosure.
+    void setTitles(const char* name, const char* brand, const char* subtitle)
+    {
+        name_ = name, brand_ = brand, subtitle_ = subtitle;
+    }
 
     // Free layout: the scale and top-left of the design inside a width x height area.
     static void freeTransform(float width, float height, float& scale, ImVec2& origin)
@@ -678,17 +764,23 @@ public:
     {
         if (Meta::kFreeLayout)
             drawFree(s, width, height, accentRgb, host);
+        else if (Meta::kPedal)
+            drawPedal(s, width, height, accentRgb, host);
         else
-            drawFlow(s, width, top, accentRgb, host);
+        {
+            drawShapes(0.f, 0.f, s, s);
+            drawFlow(s, 0.f, width, top, accentRgb, host);
+        }
     }
 
-private:
+    // Free layout: every control at its own box, scaled as a whole to fit the window.
     void drawFree(const float s, const float width, const float height, const uint32_t accentRgb,
                   ControlsHost& host)
     {
         float sc;
         ImVec2 o;
         freeTransform(width, height, sc, o);
+        drawShapes(o.x, o.y, sc, s);
         ImGui::SetWindowFontScale(sc / s);
         const ImVec4 muted = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
         const ImVec4 bright = ImGui::GetStyle().Colors[ImGuiCol_Text];
@@ -696,26 +788,189 @@ private:
         {
             const ParamInfo& p = Meta::kParams[i];
             const UiParam& u = Meta::kUiParams[i];
-            const ImVec4 labelCol = textColor(u.labelColor, muted), valueCol = textColor(u.valueColor, bright);
             const float bx = o.x + u.x * sc, by = o.y + u.y * sc, bw = u.w * sc, bh = u.h * sc;
             if (u.label)
             {
-                ImGui::SetCursorPosY(by - 20.f * sc);
-                centeredText(p.shortName[0] ? p.shortName : p.name, bx, bw, labelCol);
+                FontScope f(font(u.labelFont));
+                ImGui::SetCursorPosY(by - (20.f + Meta::kLabelExtra) * sc);
+                centeredText(p.shortName[0] ? p.shortName : p.name, bx, bw, textColor(u.labelColor, muted));
             }
             const bool hasValue = drawControl(i, bx, by, bw, bh, sc, accentRgb, host);
             if (u.value && hasValue)
             {
                 char buf[64];
                 formatValue(p, values[i], buf, sizeof(buf));
+                FontScope f(font(u.valueFont));
                 ImGui::SetCursorPosY(by + bh + 6.f * sc);
-                centeredText(buf, bx, bw, valueCol);
+                centeredText(buf, bx, bw, textColor(u.valueColor, bright));
             }
         }
         ImGui::SetWindowFontScale(1.f);
     }
 
-    void drawFlow(const float s, const float width, const float top, const uint32_t accentRgb, ControlsHost& host)
+    // The recipe's [[ui.shape]] decorations, at design origin (ox, oy) and scale sc (s = display scale).
+    void drawShapes(const float ox, const float oy, const float sc, const float s)
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 wp = ImGui::GetWindowPos();
+        for (uint32_t k = 0; k < Meta::kNumShapes; ++k)
+        {
+            const UiShape& sh = Meta::kShapes[k];
+            const ImVec2 p(wp.x + ox + sh.x * sc, wp.y + oy + sh.y * sc);
+            const ImU32 stroke = sh.stroke >= 0 ? ImGui::GetColorU32(rgb((uint32_t)sh.stroke)) : 0;
+            const ImU32 fill = sh.fill >= 0 ? ImGui::GetColorU32(rgb((uint32_t)sh.fill)) : 0;
+            const float w = std::max(0.5f, sh.width * sc);
+            const int firstVertex = dl->VtxBuffer.Size; // the shape's vertices are rotated afterwards
+            ImVec2 center = p;
+            switch (sh.kind)
+            {
+            case 0: { // line
+                const ImVec2 q(wp.x + ox + sh.a * sc, wp.y + oy + sh.b * sc);
+                center = ImVec2((p.x + q.x) * 0.5f, (p.y + q.y) * 0.5f);
+                if (stroke && sh.width > 0.f)
+                    dl->AddLine(p, q, stroke, w);
+                break;
+            }
+            case 1: { // rect
+                const ImVec2 q(p.x + sh.a * sc, p.y + sh.b * sc);
+                center = ImVec2((p.x + q.x) * 0.5f, (p.y + q.y) * 0.5f);
+                if (fill)
+                    dl->AddRectFilled(p, q, fill, sh.radius * sc);
+                if (stroke && sh.width > 0.f)
+                    dl->AddRect(p, q, stroke, sh.radius * sc, 0, w);
+                break;
+            }
+            case 2: // circle
+                if (fill)
+                    dl->AddCircleFilled(p, sh.a * sc, fill, 48);
+                if (stroke && sh.width > 0.f)
+                    dl->AddCircle(p, sh.a * sc, stroke, 48, w);
+                break;
+            case 4: { // image
+                const ImVec2 q(p.x + sh.a * sc, p.y + sh.b * sc);
+                center = ImVec2((p.x + q.x) * 0.5f, (p.y + q.y) * 0.5f);
+                if (const ImageSet::Image* img = images_.get(sh.image))
+                    dl->AddImage(ImageSet::id(*img), p, q);
+                break;
+            }
+            default: { // text
+                FontScope f(font(sh.font));
+                ImGui::SetWindowFontScale((f.pushed ? 1.f : sh.a / 13.f) * sc / s);
+                ImGui::SetCursorPos(ImVec2(ox + sh.x * sc, oy + sh.y * sc));
+                const ImVec4 col = sh.stroke >= 0 ? rgb((uint32_t)sh.stroke) : ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
+                const ImVec2 ts = ImGui::CalcTextSize(sh.text);
+                center = ImVec2(p.x + ts.x * 0.5f, p.y + ts.y * 0.5f);
+                ImGui::TextColored(col, "%s", sh.text);
+                ImGui::SetWindowFontScale(1.f);
+                break;
+            }
+            }
+            if (sh.rotation != 0.f)
+            {
+                const float a = sh.rotation * 0.0174532925f, cs = std::cos(a), sn = std::sin(a);
+                for (int v = firstVertex; v < dl->VtxBuffer.Size; ++v)
+                {
+                    ImVec2& pos = dl->VtxBuffer[v].pos;
+                    const float dx = pos.x - center.x, dy = pos.y - center.y;
+                    pos = ImVec2(center.x + dx * cs - dy * sn, center.y + dx * sn + dy * cs);
+                }
+            }
+        }
+    }
+
+    // Pedal style: the enclosure (scaled as a whole to fit, centered), the controls in rows inside it, the
+    // name under them and, when the recipe binds one (pedal_switch), a working footswitch with its LED.
+    void drawPedal(const float s, const float width, const float height, const uint32_t accentRgb, ControlsHost& host)
+    {
+        float sc;
+        ImVec2 o;
+        freeTransform(width, height, sc, o);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 wp = ImGui::GetWindowPos();
+        const float ex = o.x + kPedalMargin * sc, ey = o.y + kPedalMargin * sc;
+        const float ew = Meta::kPedalWidth * sc, eh = Meta::kPedalHeight * sc;
+        const ImVec2 a(wp.x + ex, wp.y + ey), b(a.x + ew, a.y + eh);
+        const float rad = 14.f * sc;
+        const ImVec4 paint = rgb(Meta::kPedalColor);
+
+        // shadow, edge, paint, and a highlight along the top
+        dl->AddRectFilled(ImVec2(a.x + 2.f * sc, a.y + 7.f * sc), ImVec2(b.x + 2.f * sc, b.y + 9.f * sc),
+                          ImGui::GetColorU32(ImVec4(0, 0, 0, 0.35f)), rad + 2.f * sc);
+        dl->AddRectFilled(a, b, ImGui::GetColorU32(darken(paint, 0.35f)), rad);
+        dl->AddRectFilled(ImVec2(a.x + 2.f * sc, a.y + 2.f * sc), ImVec2(b.x - 2.f * sc, b.y - 2.f * sc),
+                          ImGui::GetColorU32(paint), rad - 2.f * sc);
+        dl->AddLine(ImVec2(a.x + rad, a.y + 3.5f * sc), ImVec2(b.x - rad, a.y + 3.5f * sc),
+                    ImGui::GetColorU32(ImVec4(1, 1, 1, 0.28f)), 1.5f * sc);
+        drawShapes(o.x, o.y, sc, s);
+        ImGui::SetWindowFontScale(sc / s);
+        drawFlow(sc, ex, ew, ey + kPedalTop * sc, accentRgb, host);
+
+        // name and brand (or subtitle)
+        const ImGuiStyle& st = ImGui::GetStyle();
+        const bool hasSwitch = Meta::kPedalSwitch >= 0;
+        const float yb = ey + eh - ((hasSwitch ? kPedalBottom : kPedalBottomPlain) + Meta::kTitleExtra - 10.f) * sc;
+        {
+            FontScope f(font(Meta::kTitleFont));
+            ImGui::SetWindowFontScale((f.pushed ? 1.f : 1.9f) * sc / s);
+            const float nw = ImGui::CalcTextSize(name_).x;
+            ImGui::SetCursorPos(Meta::kTitleX >= 0.f ? ImVec2(o.x + Meta::kTitleX * sc, o.y + Meta::kTitleY * sc)
+                                                     : ImVec2(ex + (ew - nw) * 0.5f, yb));
+            ImGui::TextColored(textColor(Meta::kTitleColor, st.Colors[ImGuiCol_Text]), "%s", name_);
+        }
+        {
+            FontScope f(font(Meta::kLabelFont));
+            ImGui::SetWindowFontScale(sc / s);
+            const char* line = subtitle_[0] ? subtitle_ : brand_;
+            const float lw = ImGui::CalcTextSize(line).x;
+            ImGui::SetCursorPos(Meta::kBrandX >= 0.f ? ImVec2(o.x + Meta::kBrandX * sc, o.y + Meta::kBrandY * sc)
+                                                     : ImVec2(ex + (ew - lw) * 0.5f, yb + (30.f + Meta::kTitleExtra) * sc));
+            ImGui::TextColored(textColor(Meta::kLabelColor, st.Colors[ImGuiCol_TextDisabled]), "%s", line);
+        }
+        ImGui::SetWindowFontScale(1.f);
+
+        if (!hasSwitch)
+            return;
+
+        // the footswitch toggles its parameter; the LED shows it
+        const uint32_t i = (uint32_t)Meta::kPedalSwitch;
+        const float r = 22.f * sc;
+        const ImVec2 fs(ex + ew * 0.5f, ey + eh - 36.f * sc); // window-relative
+        ImGui::PushID("##pedalswitch");
+        ImGui::SetCursorPos(ImVec2(fs.x - r, fs.y - r));
+        const bool clicked = ImGui::InvisibleButton("##sw", ImVec2(2.f * r, 2.f * r));
+        const bool hovered = ImGui::IsItemHovered(), down = ImGui::IsItemActive();
+        if (hovered && Meta::kParams[i].description[0] && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip("%s", Meta::kParams[i].description);
+        ImGui::PopID();
+        if (clicked)
+        {
+            const float v = values[i] > 0.5f ? 0.f : 1.f;
+            host.beginEdit(i);
+            values[i] = v;
+            host.setValue(i, v);
+            host.endEdit(i);
+        }
+        drawMetalSwitch(dl, ImVec2(wp.x + fs.x, wp.y + fs.y), r, hovered, down);
+        const bool on = values[i] > 0.5f;
+        const ImVec2 led(wp.x + fs.x - 48.f * sc, wp.y + fs.y);
+        const ImVec4 red = rgb(0xe5352b);
+        if (on)
+        {
+            dl->AddCircleFilled(led, 9.f * sc, ImGui::GetColorU32(ImVec4(red.x, red.y, red.z, 0.28f)), 20);
+            dl->AddCircleFilled(led, 5.f * sc, ImGui::GetColorU32(red), 20);
+            dl->AddCircleFilled(ImVec2(led.x - 1.5f * sc, led.y - 1.5f * sc), 1.8f * sc,
+                                ImGui::GetColorU32(ImVec4(1, 1, 1, 0.6f)), 10);
+        }
+        else
+        {
+            dl->AddCircleFilled(led, 5.f * sc, ImGui::GetColorU32(darken(red, 0.65f)), 20);
+        }
+        dl->AddCircle(led, 5.f * sc, ImGui::GetColorU32(ImVec4(0, 0, 0, 0.45f)), 20, 1.f * sc);
+    }
+
+    // Rows of controls in the band [x, x + width) of the window, from `top` down.
+    void drawFlow(const float s, const float x, const float width, const float top, const uint32_t accentRgb,
+                  ControlsHost& host)
     {
         const float avail = width - 2.f * kPad * s;
         const ImVec4 muted = textColor(Meta::kLabelColor, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
@@ -724,18 +979,25 @@ private:
         for (uint32_t g = 0; g < Meta::kNumGroups; ++g)
         {
             const UiGroup& group = Meta::kGroups[g];
-            if (group.numParams == 0)
+            // a pedal's footswitch parameter is drawn as the switch, not in the rows
+            uint32_t shown[kSize];
+            uint32_t numShown = 0;
+            for (uint32_t k = 0; k < group.numParams; ++k)
+                if (!(Meta::kPedal && (int32_t)group.params[k] == Meta::kPedalSwitch))
+                    shown[numShown++] = group.params[k];
+            if (numShown == 0)
                 continue;
 
             if (group.title[0])
             {
-                ImGui::SetCursorPos(ImVec2(kPad * s, y + 6.f * s));
+                FontScope f(font(Meta::kLabelFont));
+                ImGui::SetCursorPos(ImVec2(x + kPad * s, y + 6.f * s));
                 ImGui::TextColored(muted, "%s", group.title);
                 const float tw = ImGui::CalcTextSize(group.title).x;
                 const ImVec2 wp = ImGui::GetWindowPos();
                 const float ly = wp.y + y + 6.f * s + ImGui::GetTextLineHeight() * 0.5f;
-                ImGui::GetWindowDrawList()->AddLine(ImVec2(wp.x + kPad * s + tw + 8.f * s, ly),
-                                                    ImVec2(wp.x + width - kPad * s, ly),
+                ImGui::GetWindowDrawList()->AddLine(ImVec2(wp.x + x + kPad * s + tw + 8.f * s, ly),
+                                                    ImVec2(wp.x + x + width - kPad * s, ly),
                                                     ImGui::GetColorU32(ImGui::GetStyle().Colors[ImGuiCol_Border]),
                                                     1.f * s);
                 y += kTitleH * s;
@@ -745,9 +1007,9 @@ private:
             uint32_t rowStart[kSize + 1];
             uint32_t numRows = 0, inRow = 0;
             float blockW = 0.f, rowW = 0.f;
-            for (uint32_t k = 0; k < group.numParams; ++k)
+            for (uint32_t k = 0; k < numShown; ++k)
             {
-                const float w = cellSize(Meta::kParams[group.params[k]]).x * s;
+                const float w = cellSize(Meta::kParams[shown[k]]).x * s;
                 if (inRow > 0 && (inRow >= group.columns || rowW + w > avail))
                 {
                     blockW = std::max(blockW, rowW);
@@ -760,19 +1022,19 @@ private:
                 ++inRow;
             }
             blockW = std::max(blockW, rowW);
-            rowStart[numRows] = group.numParams;
+            rowStart[numRows] = numShown;
 
-            const float x0 = std::max(kPad * s, (width - blockW) * 0.5f);
+            const float x0 = x + std::max(kPad * s, (width - blockW) * 0.5f);
             for (uint32_t r = 0; r < numRows; ++r)
             {
-                float x = x0, rowH = 0.f;
+                float cx = x0, rowH = 0.f;
                 for (uint32_t k = rowStart[r]; k < rowStart[r + 1]; ++k)
                 {
-                    const uint32_t i = group.params[k];
+                    const uint32_t i = shown[k];
                     const ImVec2 cell = cellSize(Meta::kParams[i]);
-                    drawCell(i, x, y, cell.x * s, s, accentRgb, host);
-                    x += cell.x * s;
-                    rowH = std::max(rowH, cell.y * s);
+                    drawCell(i, cx, y, cell.x * s, s, accentRgb, host);
+                    cx += cell.x * s;
+                    rowH = std::max(rowH, (cell.y + Meta::kLabelExtra) * s);
                 }
                 y += rowH;
             }
@@ -788,10 +1050,13 @@ private:
         const UiParam& u = Meta::kUiParams[i];
         const ImGuiStyle& st = ImGui::GetStyle();
 
-        ImGui::SetCursorPosY(cy);
-        centeredText(p.shortName[0] ? p.shortName : p.name, cx, cellW, textColor(u.labelColor, st.Colors[ImGuiCol_TextDisabled]));
+        {
+            FontScope f(font(u.labelFont));
+            ImGui::SetCursorPosY(cy);
+            centeredText(p.shortName[0] ? p.shortName : p.name, cx, cellW, textColor(u.labelColor, st.Colors[ImGuiCol_TextDisabled]));
+        }
 
-        const float top = cy + 24.f * s;
+        const float top = cy + (24.f + Meta::kLabelExtra) * s;
         float bx, by, bw, bh, valueY;
         switch (p.control)
         {
@@ -846,6 +1111,7 @@ private:
         {
             char buf[64];
             formatValue(p, values[i], buf, sizeof(buf));
+            FontScope f(font(u.valueFont));
             ImGui::SetCursorPosY(valueY);
             centeredText(buf, cx, cellW, textColor(u.valueColor, st.Colors[ImGuiCol_Text]));
         }
@@ -1068,18 +1334,7 @@ private:
             else if (p.control == Control::Footswitch)
             {
                 led(ImVec2(pos.x + bw * 0.5f, pos.y + bw * 0.11f), bw * 0.09f);
-                const ImVec2 c(pos.x + bw * 0.5f, pos.y + bh - bw * 0.5f);
-                const float r = bw * 0.46f;
-                const ImVec4 metal = rgb(0xb4b8bf);
-                dl->AddCircleFilled(c, r, ImGui::GetColorU32(darken(metal, 0.6f)), 32);
-                dl->AddCircleFilled(c, r * 0.86f, ImGui::GetColorU32(darken(metal, 0.3f)), 32);
-                const float press = down ? 0.06f : 0.f;
-                for (int k = 0; k <= 6; ++k)
-                {
-                    const float f = k / 6.f;
-                    dl->AddCircleFilled(ImVec2(c.x - r * 0.08f * f, c.y - r * 0.08f * f + r * press), r * (0.7f - 0.3f * f),
-                                        ImGui::GetColorU32(lighten(darken(metal, 0.2f - 0.2f * f), 0.4f * f + (hovered ? 0.08f : 0.f))), 28);
-                }
+                drawMetalSwitch(dl, ImVec2(pos.x + bw * 0.5f, pos.y + bh - bw * 0.5f), bw * 0.46f, hovered, down);
             }
             else // lever
             {
@@ -1311,7 +1566,15 @@ private:
         return showsValue;
     }
 
+    static constexpr uint32_t kMaxFonts = 16;
+
     ImageSet images_;
+    const Asset* assets_;
+    uint32_t numAssets_;
+    ImFont* fonts_[kMaxFonts] = {};
+    const char* name_ = "";
+    const char* brand_ = "";
+    const char* subtitle_ = "";
     char entry_[32] = {};
     int entryIndex_ = -1;
     bool entryFocus_ = false;

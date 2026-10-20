@@ -87,7 +87,8 @@ live. If a test or the build fails, **Fix with AI** sends the log back; compiler
 jump to the line in the recipe. You can also edit the recipe by hand, or start from an example.
 
 The **Interface** tab shows a live preview of the plugin's editor. Change the accent color, light or dark
-theme, background and subtitle; pick a knob style (modern, vintage, flat, minimal, metal), knob color and
+theme, background and subtitle; a flat panel or a stompbox **pedal** (paint color, width, and an optional working footswitch); text colors, sizes and fonts (five built in, or upload a .ttf/.otf) for the title, names and values, and drag
+the title and brand anywhere; lines, rectangles, circles and text as decoration; pick a knob style (modern, vintage, flat, minimal, metal), knob color and
 scale marks; drag controls into titled groups; and pick how each one is drawn: knob in three sizes,
 slider or fader, number box or rotary selector; toggle, button, LED, footswitch, lever or checkbox;
 drop-down, button row or radio list. It all goes into the recipe's `[ui]`, `[[ui.group]]`,

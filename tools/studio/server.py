@@ -438,34 +438,43 @@ def asset_file(recipe_id: str, name: str) -> Path | None:
     """An image path relative to the recipe's folder, refusing anything outside it."""
     base = recipe_dir(recipe_id).resolve()
     target = (base / name).resolve()
-    if base not in target.parents or target.suffix.lower() != ".png" or not target.is_file():
+    if base not in target.parents or target.suffix.lower() not in (".png", ".ttf", ".otf") or not target.is_file():
         return None
     return target
 
 
 def list_assets(recipe_id: str) -> list[dict]:
-    """PNG images in the recipe's own folder (plugins/<id>/), with their sizes."""
+    """PNG images (with their sizes) and TTF/OTF fonts in the recipe's own folder (plugins/<id>/)."""
     folder = recipe_dir(recipe_id) / recipe_id
     out = []
-    for f in sorted(folder.glob("*.png")) if folder.is_dir() else []:
-        size = recipe_tool.png_size(f)
-        if isinstance(size, tuple):
-            out.append({"name": f"{recipe_id}/{f.name}", "width": size[0], "height": size[1]})
+    for f in sorted(folder.iterdir()) if folder.is_dir() else []:
+        if f.suffix.lower() == ".png":
+            size = recipe_tool.png_size(f)
+            if isinstance(size, tuple):
+                out.append({"name": f"{recipe_id}/{f.name}", "kind": "image", "width": size[0], "height": size[1]})
+        elif f.suffix.lower() in (".ttf", ".otf"):
+            out.append({"name": f"{recipe_id}/{f.name}", "kind": "font"})
     return out
 
 
 def save_asset(recipe_id: str, name: str, data: bytes) -> tuple[str | None, str | None]:
     if not ID_RE.match(recipe_id):
         return None, "save the recipe first"
-    if data[:8] != b"\x89PNG\r\n\x1a\n":
-        return None, "only PNG images are supported"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        suffix = ".png"
+    elif data[:4] in (b"\x00\x01\x00\x00", b"true"):
+        suffix = ".ttf"
+    elif data[:4] == b"OTTO":
+        suffix = ".otf"
+    else:
+        return None, "only PNG images and TTF/OTF fonts are supported"
     if len(data) > recipe_tool.MAX_IMAGE_BYTES:
         return None, f"images must be under {recipe_tool.MAX_IMAGE_BYTES // 1_000_000} MB"
     stem = re.sub(r"[^a-z0-9-]+", "-", Path(name).stem.lower()).strip("-") or "image"
     folder = ROOT / "plugins" / recipe_id
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / f"{stem}.png").write_bytes(data)
-    return f"{recipe_id}/{stem}.png", None
+    (folder / f"{stem}{suffix}").write_bytes(data)
+    return f"{recipe_id}/{stem}{suffix}", None
 
 
 def apply_ui_to(text: str, ui: dict) -> tuple[str | None, dict | None, str | None]:
@@ -536,7 +545,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Security-Policy",
                              "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
-                             "img-src 'self' blob: data:")
+                             "img-src 'self' blob: data:; font-src 'self'")
             self.end_headers()
             self.wfile.write(body)
             return
@@ -563,6 +572,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             rid = (query.get("id") or [""])[0]
             return self._json(200, {"assets": list_assets(rid) if ID_RE.match(rid) else []})
 
+        if url.path == "/api/builtin-font":
+            name = (query.get("name") or [""])[0]
+            file = recipe_tool.BUILTIN_FONTS.get(name)
+            if not file:
+                return self._json(404, {"error": "no such font"})
+            body = (recipe_tool.FONTS_DIR / file).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "font/ttf")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if url.path == "/api/asset":
             rid = (query.get("id") or [""])[0]
             f = asset_file(rid, (query.get("name") or [""])[0]) if ID_RE.match(rid) else None
@@ -570,7 +592,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(404, {"error": "no such image"})
             body = f.read_bytes()
             self.send_response(200)
-            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Type", {".png": "image/png", ".ttf": "font/ttf", ".otf": "font/otf"}[f.suffix.lower()])
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()

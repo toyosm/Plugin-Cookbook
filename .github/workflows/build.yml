@@ -26,6 +26,8 @@ jobs:
         run: python3 tools/recipe.py check --all
       - name: Test recipes
         run: python3 tools/recipe.py test --all
+      - name: Measure the DSP library
+        run: python3 tools/recipe.py test-dsp --sanitize
 
   linux:
     needs: recipes

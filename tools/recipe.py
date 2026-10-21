@@ -41,6 +41,7 @@ except ModuleNotFoundError:  # pragma: no cover
 ROOT = Path(__file__).resolve().parent.parent
 FRAMEWORK_INCLUDE = ROOT / "framework" / "include"
 HARNESS_SRC = ROOT / "tools" / "harness" / "harness.cpp"
+DSP_TEST_SRC = ROOT / "tools" / "harness" / "dsp_test.cpp"
 PLUGINS_DIR = ROOT / "plugins"
 EXAMPLES_DIR = ROOT / "examples"
 RECIPE_SUFFIX = ".plugin.toml"
@@ -2071,6 +2072,30 @@ def cmd_generate(args) -> int:
     return 0
 
 
+def cmd_test_dsp(args) -> int:
+    """Builds and runs the measurements of the helper library (cookbook/dsp.hpp)."""
+    cxx = find_cxx()
+    if not cxx:
+        sys.exit("no C++ compiler found (set CXX)")
+    work = ROOT / "build" / "cookbook-test"
+    work.mkdir(parents=True, exist_ok=True)
+    exe = work / ("dsp_test.exe" if os.name == "nt" else "dsp_test")
+    if cxx[0].lower().endswith(("cl", "cl.exe")):
+        cmd = cxx + ["/nologo", "/std:c++17", "/O2", "/EHsc", f"/I{FRAMEWORK_INCLUDE}", str(DSP_TEST_SRC),
+                     f"/Fe:{exe}", f"/Fo:{work}\\"]
+    else:
+        cmd = cxx + ["-std=c++17", "-O2", "-Wall", "-Wextra", f"-I{FRAMEWORK_INCLUDE}", str(DSP_TEST_SRC), "-o", str(exe)]
+        if args.sanitize:
+            cmd += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        if platform.system() == "Linux":
+            cmd += ["-lm"]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        print(res.stdout + res.stderr, file=sys.stderr)
+        return 1
+    return subprocess.run([str(exe)]).returncode
+
+
 def cmd_test(args) -> int:
     recipes, errors = load_all(resolve_recipes(args.recipes, args.all))
     for e in errors:
@@ -2239,6 +2264,10 @@ def main() -> int:
     p.add_argument("--quick", action="store_true", help="fewer sample rates and parameter sets")
     p.add_argument("--sanitize", action="store_true", help="build with AddressSanitizer + UBSan")
     p.set_defaults(func=cmd_test)
+
+    p = sub.add_parser("test-dsp", help="measure the helper DSP library (filters, compressor, limiter, ...)")
+    p.add_argument("--sanitize", action="store_true", help="build with AddressSanitizer + UBSan")
+    p.set_defaults(func=cmd_test_dsp)
 
     p = sub.add_parser("render", help="process a WAV file offline")
     p.add_argument("recipe")

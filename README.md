@@ -157,6 +157,10 @@ tables and a `[dsp]` C++ `Kernel` class (`prepare` / `reset` / `process`), using
 `--sanitize` rebuilds with AddressSanitizer/UBSan to catch out-of-bounds buffer access.
 `FAIL` must be fixed; `WARN` is advice.
 
+The helper library recipes build on is measured separately: `python3 tools/recipe.py test-dsp` checks each
+block against what it promises (filter responses, compressor curve, aliasing of the ADAA saturators,
+limiter ceiling and latency, reverb decay, pitch of the shifter).
+
 The CI additionally runs [pluginval](https://github.com/Tracktion/pluginval)-style validation through
 DISTRHO's build action. Locally, the examples pass `pluginval --strictness-level 10` (including editor
 tests) and `clap-validator`.
@@ -168,7 +172,7 @@ plugins/                 your recipes (*.plugin.toml). When empty, the examples 
 examples/                reference recipes: gain, overdrive, chorus, multimode-filter, stereo-delay
 prompts/                 plugin-from-idea.md — the instructions an AI follows
 framework/include/cookbook/
-    dsp.hpp              helper DSP library available to recipes (filters, delay lines, LFO, oversampler…)
+    dsp.hpp              helper DSP library available to recipes (filters, compressor, limiter, reverb, …)
     Engine.hpp           smoothing, block splitting, denormals, safety net — shared by plugins and tests
     ParamInfo.hpp        parameter metadata
     Controls.hpp         generic Dear ImGui controls (knobs, toggles, drop-downs), shared by editor and app

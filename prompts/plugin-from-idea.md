@@ -191,7 +191,8 @@ Also available: `kNumInputs`, `kNumOutputs` (constexpr), and everything in `<cma
 
 ### Helper library (`cookbook/dsp.hpp`, already included)
 
-All helpers are single-channel: keep one instance per channel (e.g. `Biquad bq_[2];`).
+Helpers are single-channel unless noted: keep one instance per channel (e.g. `Biquad bq_[2];`). Every one is
+measured by `python3 tools/recipe.py test-dsp`; prefer them to writing the same thing by hand.
 
 | Helper | API |
 |---|---|
@@ -205,6 +206,15 @@ All helpers are single-channel: keep one instance per channel (e.g. `Biquad bq_[
 | `DelayLine` | `allocate(maxDelaySamples)` in prepare, `clear()`, `push(x)`, `read(delaySamples)` (linear), `readHermite(delaySamples)` (smoother for modulated delays, needs ≥ 1), `maxDelay()`. After `push(x)`, `read(0)` returns `x`. |
 | `Lfo` | `setRate(hz, sampleRate)`, `next(Lfo::Sine/Triangle/Saw/Square)` → [-1, 1], `reset(phase = 0)`, `phase()` |
 | `EnvelopeFollower` | `setup(sampleRate, attackMs, releaseMs)`, `process(x)` → linear amplitude, `reset()` |
+| `Svf` | same `set()` and types as `Biquad` (Bandpass is 0 dB at center), `process(x)`, `reset()` — state-variable filter that stays clean when the cutoff moves every sample: use it for sweeps, envelope filters, wahs, synth-style resonant filters |
+| `TiltEq` | `setup(sampleRate, pivotHz = 800)`, `setTilt(db)` (when the parameter moves), `process(x)`, `reset()` — one-knob dark/bright: lows -db/2, highs +db/2 |
+| `AdaaTanh` / `AdaaHardClip` | `process(x)`, `reset()` — drop-in for `std::tanh(x)` / `hardClip(x)` with much less aliasing (about 15 dB); half a sample of delay. Default choice for saturation; add `Oversampler2x` around it for very high gain |
+| `Compressor` | `set(sampleRate, thresholdDb, ratio, attackMs, releaseMs, kneeDb = 6, Compressor::Peak/Rms)` (cheap, per block), `process(x)`, or `gain(detector)` → linear gain for stereo linking (`gain(std::max(fabs(l), fabs(r)))`), `gainReductionDb()`, `reset()`. Add makeup gain yourself |
+| `Limiter` | `allocate(sampleRate, lookaheadMs = 5)` in prepare, `set(ceilingDb, releaseMs)`, `process(x)` or `processStereo(l, r)` (linked), `latency()` (report it), `gainReductionDb()`, `reset()` — never exceeds the ceiling |
+| `NoiseGate` | `set(sampleRate, thresholdDb, attackMs, holdMs, releaseMs, rangeDb = -80, hysteresisDb = 4)` (per block), `process(x)` or `gain(detector)` for stereo, `isOpen()`, `reset()` |
+| `PitchShifter` | `allocate(sampleRate, windowMs = 50)` in prepare, `setRatio(r)` (use `semitonesToRatio(st)`), `process(x)`, `reset()` — delay-based, good for octaves, harmonies, shimmer |
+| `Reverb` | stereo: `allocate(sampleRate)` in prepare, `set(size01, damping01, width01)`, `process(inL, inR, wetL, wetR)` (wet only: mix with the dry yourself), `reset()` — Freeverb; for a mono input pass the same sample to both |
+| `Noise` | `Noise n{seed};`, `next()` → white noise in [-1, 1), `reset()` (call it from `Kernel::reset()`); give each channel its own seed |
 | `Oversampler2x` | `allocate(maxBlockSize)`, `upsample(in, out2x, frames)`, `downsample(in2x, out, frames)`, `reset()`, static `latency()` (23 samples) — needs a scratch `std::vector<float>` of `2 * maxBlockSize` allocated in prepare |
 
 ### Hard rules
@@ -352,7 +362,7 @@ More worked examples in `examples/`:
 - `process()` writes every sample of every output and reads only declared inputs.
 - `reset()` clears all state including phases and counters.
 - Feedback loop gain stays below 1; output stays near 0 dBFS at defaults.
-- If `Oversampler2x` (or anything else adding delay) is used, `latency()` returns it.
+- If `Oversampler2x`, `Limiter` (or anything else adding delay) is used, `latency()` returns it.
 - Only allowed `#include`s; no `#define`; no globals.
 
 If any check fails, fix it before sending. The user can't.
